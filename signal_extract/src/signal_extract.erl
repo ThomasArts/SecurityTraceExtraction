@@ -1,7 +1,7 @@
 -module(signal_extract).
 
 -export([noisy_trace/0,register_binaries/2,trace_make_call_deterministic/1]).
--export([get_trace/1,compose_binaries/1,traceback_experiment/0,print_array/2]).
+-export([get_trace/1,compose_binaries/1,traceback_experiment/1,print_array/2]).
 -export([print_binary_register/0,show_trace/1,show_registered_trace/1]).
 
 -compile(export_all).
@@ -136,7 +136,7 @@ analyze_trace_file(FileName) ->
   signal_extract:print_binary_register(),
   
   io:format("~n~n~nTracing back calls to enoise:gen_tcp_send:~n~n"),
-  signal_extract:traceback_experiment().
+  signal_extract:traceback_experiment(PredefinedBinaries).
 
 get_key(KeyFileName,KeyDir,Type) ->
   FilePath = KeyDir++"/"++KeyFileName++if Type==priv -> ""; Type==pub -> ".pub" end,
@@ -437,10 +437,14 @@ call_limits(Pid,I,A) ->
 
 
 
-traceback(EventRecognizer,A) ->
+traceback(EventRecognizer,Predefs,A) ->
   apply_in_trace(EventRecognizer,A,
-                 fun (Event,_,_,_) -> 
-                     trace_back_binaries(binaries(Event),[])
+                 fun (MFA,Time,_,_) -> 
+                     {ExpandedMFA,Binaries} = expand_term(MFA,[]),
+                     io:format
+                       ("~n~n~nStarting at ~p with call ~s:~n",
+                        [Time,print_full_call(ExpandedMFA)]),
+                     trace_back_binaries(Binaries,Predefs,[])
                  end).
 
 apply_in_trace(EventRecognizer,A,F) ->
@@ -451,25 +455,25 @@ apply_in_trace(EventRecognizer,I,Size,A,F) ->
   Event = array:get(I,A),
   case EventRecognizer(I,Event) of
     true ->
-      F(Event,I,Size,A);
+      {trace_ts,_,call,Call,_} = Event,
+      F(Call,I,Size,A);
     false ->
       ok
   end,
   apply_in_trace(EventRecognizer,I+1,Size,A,F).
   
-trace_back_binaries([],_Seen) ->
+trace_back_binaries([],_Predefs,_Seen) ->
   ok;
-trace_back_binaries([Binary|Binaries],Seen) ->
-  case lists:member(Binary,Seen) of
+trace_back_binaries([Binary|Binaries],Predefs,Seen) ->
+  case lists:member(Binary,Seen) orelse lists:keyfind(Binary,1,Predefs)=/=false of
     true -> 
-      trace_back_binaries(Binaries,Seen);
+      trace_back_binaries(Binaries,Predefs,Seen);
     false -> 
       Register = get_binary(Binary),
       if
         Register == undefined -> 
-          trace_back_binaries(Binaries,Seen);
+          trace_back_binaries(Binaries,Predefs,Seen);
         true ->
-          NewSeen = [Binary|Seen],
           case binary_type(Register) of
             consumed -> 
               io:format
@@ -480,7 +484,7 @@ trace_back_binaries([Binary|Binaries],Seen) ->
                   time(source(Register)),
                   subst_with_register(extract_call(item(source(Register))))
                  ]),
-              trace_back_binaries(Binaries,NewSeen);
+              trace_back_binaries(Binaries,Predefs,[Binary|Seen]);
             produced ->
               ReturnString =
                 case Binary == extract_return(item(return(Register))) of
@@ -490,72 +494,107 @@ trace_back_binaries([Binary|Binaries],Seen) ->
                     io_lib:format
                       ("returned as ~p~n",
                        [
-                        %%time(return(Register)),
-                        subst_with_register(extract_return(item(return(Register))))
+                        subst_with_register
+                          (extract_return(item(return(Register))))
                        ])
                 end,
+              {M,F,Args} = extract_call(item(source(Register))),
+              {ExpandedArgs,NewBinaries} = expand_terms(Args,Binaries),
               io:format
-                ("~nBinary ~p produced at ~p by call~n  ~p~n~s",
+                ("~nBinary ~p produced at ~p by call~n  ~s~n~s",
                  [
                   subst_with_register(Binary),
                   time(source(Register)),
-                  subst_with_register(extract_call(item(source(Register)))),
+                  print_full_call({M,F,ExpandedArgs}),
                   ReturnString
                  ]),
-              SourceBinaries = binaries(source(Register)),
-              trace_back_binaries(SourceBinaries++Binaries,Seen);
+              trace_back_binaries(NewBinaries,Predefs,[Binary|Seen]);
             rewrite ->
-              Item = item(source(Register)),
-              RewriteType = sol_type(Item),
-              ArgBinaries = sol_args(Item),
-              Op = sol_op(Item),
-              OpString =
-                if
-                  Op==undefined -> "";
-                  true -> " where "++io_lib:format("~p",[Op])
-                end,
+              MFA = {_,_,_} = item(source(Register)),
+              {Term,NewBinaries} = expand_term(MFA,Binaries),
               io:format
-                ("~p ==~n  ~p(~s)~s~n",
+                ("~p == ~s~n",
                  [
-                  subst_with_register(Binary),
-                  RewriteType,
-                  print_binaries(ArgBinaries),
-                  OpString
+                  subst_with_register(Binary),print_call(Term)
                  ]),
-              trace_back_binaries(ArgBinaries++Binaries,NewSeen)
+              trace_back_binaries(NewBinaries,Predefs,Seen)
           end
       end
   end.
 
-print_binaries(Binaries) ->
-  lists:foldl
-    (fun (Bin,Acc) -> 
-         S = io_lib:format("~p",[subst_with_register(Bin)]),
-         if
-           Acc==[] -> S;
-           true -> Acc++","++S
-         end
-     end, [], Binaries).
+expand_terms([],Binaries) ->
+  {[],Binaries};
+expand_terms([Hd|Tl],Binaries) ->
+  {RHd,NB1} = expand_term(Hd,Binaries),
+  {RTl,NB2} = expand_term(Tl,NB1),
+  {[RHd|RTl],NB2}.
+
+expand_term(T,Binaries) ->
+  case T of
+    {M,F,Args} when is_atom(M), is_atom(F), is_list(Args) ->
+      {RewrittenArgs,NewBinaries} =
+        lists:foldr
+          (fun (Arg,{AccArgs,NBs}) ->
+               {RArg,NB1} = expand_term(Arg,NBs),
+               {[RArg|AccArgs],NB1}
+           end, {[],Binaries}, Args),
+      {{M,F,RewrittenArgs},NewBinaries};
+    _ when is_binary(T) ->
+      Register = get_binary(T),
+      if
+        Register == undefined ->
+          {T,Binaries};
+        true ->
+          case binary_type(Register) of
+            rewrite ->
+              expand_term(item(source(Register)),Binaries);
+            _ ->
+              {name(Register),[T|Binaries]}
+          end
+      end;
+    _ when is_list(T) ->
+      expand_terms(T,Binaries);
+    _ when is_tuple(T) ->
+      {Result,NewBinaries} = expand_terms(tuple_to_list(T),Binaries),
+      {list_to_tuple(Result),NewBinaries};
+    _ ->
+      {T,Binaries}
+  end.
+
+print_call({_,F,Args}) ->
+  %%io:format("~p(~p)~n",[F,Args]),
+  io_lib:format("~p(~s)",[F,print_args(Args)]).
+
+print_full_call({M,F,Args}) ->
+  io_lib:format("~p:~p(~s)",[M,F,print_args(Args)]).
+
+print_args([]) ->
+  "";
+print_args([P]) ->
+  print_arg(P);
+print_args([P|Rest]) ->
+  io_lib:format("~s,~s",[print_arg(P),print_args(Rest)]).
+
+print_arg(MFA = {M,F,Args}) when is_atom(M), is_atom(F), is_list(Args) ->
+  print_call(MFA);
+print_arg(Term) ->
+  io_lib:format("~p",[Term]).
 
 extract_call({trace_ts,_,call,Call,_}) ->
   Call.
 extract_return({trace_ts,_,return_from,_,Value,_}) ->
   Value.
 
-traceback_experiment() ->
+traceback_experiment(PredefinedBinaries) ->
   A = get_trace("enoise.trace"),
   traceback
-    (fun (Time,Event) -> 
+    (fun (_Time,Event) -> 
          case Event of
-           {trace_ts,_,call,Call={enoise,gen_tcp_snd_msg,_},_} ->
-%%          {trace_ts,_,call,Call={gen_tcp,send,_},_} ->
-             io:format
-               ("~n~n~nStarting at ~p with call ~p:~n",
-                [Time,subst_with_register(Call)]),
-             true;
+           {trace_ts,_,call,{enoise,gen_tcp_snd_msg,_},_} -> true;
            _ -> false
          end
      end,
+     PredefinedBinaries,
      A).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -618,17 +657,17 @@ return({_,{produced,_,Return}}) ->
 binary_type({_,{Type,_,_}}) ->
   Type;
 binary_type({_,{Type,_}}) ->
+  Type;
+binary_type({_,Type}) ->
   Type.
 time({Time,_}) ->
   Time.
 item({_,Item}) ->
   Item.
-sol_type({Type,_Args,_}) ->
+sol_type({_,Type,_}) ->
   Type.
-sol_args({_,Args,_}) ->
+sol_args({_,_,Args}) ->
   Args.
-sol_op({_,_,Op}) ->
-  Op.
 
 pid(Tuple) when element(1,Tuple) == trace_ts ->
   element(2,Tuple).
@@ -723,15 +762,13 @@ rewriteTo(Binary,Binaries) ->
      Binaries,
      [
       fun merge/2,
-      fun extract/2,
-      fun pad_generic/2,
-      fun (B,Bs) -> pad_with(B,Bs,16#5c) end,
-      fun (B,Bs) -> pad_with(B,Bs,16#36) end,
-      fun (B,Bs) -> pad_with(B,Bs,16#0) end,
-      merge_pad_and_xor(92),
-      merge_pad_and_xor(54),
-      pad_and_xor(92),
-      pad_and_xor(54)
+      extract(),
+      pad_with(16#5c),
+      pad_with(16#36),
+      pad_with(16#0),
+      pad_one(),
+      xor_with_pad(16#5c),
+      xor_with_pad(16#36)
      ]).
 
 rewriteTo(Binary,Binaries,Operators) ->
@@ -760,131 +797,23 @@ rewriteTo(Binary,Binaries,Operators) ->
 end.
 
 le_rewrites(R1,R2) ->
-  R1Type = element(1,R1),
-  R2Type = element(1,R2),
+  R1Type = element(2,R1),
+  R2Type = element(2,R2),
   le_type_ord(R1Type) =< le_type_ord(R2Type).
 
 le_type_ord(merge) ->
   1;
-le_type_ord(word_xor_pad) ->
-  3;
-le_type_ord(merge_with_word_xor_pad) ->
+le_type_ord(xor_with_pad) ->
   5;
-le_type_ord(padded_with) ->
+le_type_ord(pad) ->
   10;
-le_type_ord(extract_from) ->
+le_type_ord(extract) ->
   15.
 
-binary_rewrite(_F,_Binary,[]) ->
-  false;
-binary_rewrite(F,Binary,[{First,_}|Rest]) ->
-  if
-    byte_size(First) >= 4 ->
-      case binary_rewrite1(F,Binary,First,Rest) of
-        false -> 
-          binary_rewrite(F,Binary,Rest);
-        Sol ->
-          Sol
-      end;
-    true -> false
+unary_rewrite(F) ->
+  fun (Binary,Binaries) ->
+      unary_rewrite(F,Binary,Binaries)
   end.
-binary_rewrite1(_F,_Binary,_FirstCandidate,[]) ->
-  false;
-binary_rewrite1(F,Binary,FirstCandidate,[{First,_}|Rest]) ->
-  case F(Binary,FirstCandidate,First) of
-    false ->
-      binary_rewrite1(F,Binary,FirstCandidate,Rest);
-    Sol ->
-      Sol
-  end.
-
-merge_pad_and_xor(Pad) ->
-  fun (RBinary,Binaries) ->
-      binary_rewrite
-        (fun (Binary,FirstCandidate,SecondCandidate) ->
-             case merge_pad_and_xor(Binary,FirstCandidate,SecondCandidate,Pad) of
-               false ->
-                 merge_pad_and_xor(Binary,SecondCandidate,FirstCandidate,Pad);
-               Sol ->
-                 Sol
-             end
-         end, RBinary, Binaries)
-  end.
-
-merge_pad_and_xor(Binary,FirstCandidate,SecondCandidate,Pad) ->
-  if
-    byte_size(Binary) >= 8,
-    byte_size(FirstCandidate) == byte_size(Binary)-4,
-    byte_size(SecondCandidate) >= 4 ->
-      case occurs_check(Binary,FirstCandidate) 
-        andalso occurs_check(Binary,SecondCandidate) of
-        true ->
-          io:format
-            ("checking if ~p~n==~p~n+~p~n",
-             [Binary,FirstCandidate,SecondCandidate]),
-          <<B1:8, B2:8, B3:8, B4:8, _/binary>> = SecondCandidate,
-          B1b = B1 bxor Pad, B2b = B2 bxor Pad, B3b = B3 bxor Pad, B4b = B4 bxor Pad,
-          Word = <<B1b, B2b, B3b, B4b>>,
-          io:format("Word=~p~n",[Word]),
-          if
-            Binary == <<FirstCandidate/binary, Word/binary>> ->
-              {merge_with_word_xor_pad, [FirstCandidate,SecondCandidate], {pad,Pad}};
-            true ->
-              false
-          end;
-        false -> false
-      end;
-    true -> false
-  end.
-
-pad_and_xor(Pad) ->
-  fun (RBinary,Binaries) ->
-      unary_rewrite
-        (fun (Binary,Candidate) ->
-             if
-               byte_size(Binary) == 4,
-               byte_size(Candidate) >= 4 ->
-                 <<B1:8, B2:8, B3:8, B4:8, _/binary>> = Candidate,
-                 B1b = B1 bxor Pad, B2b = B2 bxor Pad, B3b = B3 bxor Pad, B4b = B4 bxor Pad,
-                 Word = <<B1b, B2b, B3b, B4b>>,
-                 if
-                   Binary == <<Word/binary>> ->
-                     {word_xor_pad, [Candidate], {pad,Pad}};
-                   true -> false
-                 end;
-               true -> false
-             end
-         end, RBinary, Binaries)
-  end.
-
-%% n-merge
-
-merge(Binary,Binaries) ->
-  if
-    byte_size(Binary) >= 4 ->
-      merge(Binary,Binary,Binaries,Binaries,[]);
-    true ->
-      false
-  end.
-
-merge(_,<<>>,_,_,Match) ->
-   {merge,lists:reverse(Match),undefined};
-merge(_,_,[],_,_) ->
-  false;
-merge(OrigBinary,Binary,[{First,_Register}|Rest],Binaries,Match) ->
-  case occurs_check(OrigBinary,First) of
-    true ->
-      case binary:longest_common_prefix([Binary,First]) of
-        N when N>1, N==byte_size(First) ->
-          RestBinary = binary:part(Binary,{N,byte_size(Binary)-N}),
-          merge(OrigBinary,RestBinary,Binaries,Binaries,[First|Match]);
-        _ ->
-          merge(OrigBinary,Binary,Rest,Binaries,Match)
-      end;
-    false -> 
-      merge(OrigBinary,Binary,Rest,Binaries,Match)
-  end.
-
 unary_rewrite(_F,_Binary,[]) ->
   false;
 unary_rewrite(F,Binary,[{First,_}|Rest]) ->
@@ -904,13 +833,38 @@ unary_rewrite(F,Binary,[{First,_}|Rest]) ->
     true -> unary_rewrite(F,Binary,Rest)
   end.
   
+binary_rewrite(F) ->
+  fun (Binary,Binaries) ->
+      binary_rewrite(F,Binary,Binaries)
+  end.
+binary_rewrite(_F,_Binary,[]) ->
+  false;
+binary_rewrite(F,Binary,[{First,_}|Rest]) ->
+  case binary_rewrite1(F,Binary,First,Rest) of
+    false -> 
+      binary_rewrite(F,Binary,Rest);
+    Sol ->
+      Sol
+  end.
+binary_rewrite1(_F,_Binary,_FirstCandidate,[]) ->
+  false;
+binary_rewrite1(F,Binary,FirstCandidate,[{First,_}|Rest]) ->
+  case F(Binary,FirstCandidate,First) of
+    false ->
+      binary_rewrite1(F,Binary,FirstCandidate,Rest);
+    Sol ->
+      Sol
+  end.
+
 occurs_check(Binary,Candidate) ->
   if
     Binary==Candidate -> 
       false;
     true ->
       CandidateRegister = get_binary(Candidate),
-      case (CandidateRegister =/= false) andalso binary_type(CandidateRegister)==rewrite of
+      io:format("reg=~p~n",[CandidateRegister]),
+      case (CandidateRegister =/= undefined) 
+        andalso binary_type(CandidateRegister)==rewrite of
         true ->
           DefinedUsingBinaries = sol_args(item(source(CandidateRegister))),
           lists:all
@@ -921,77 +875,84 @@ occurs_check(Binary,Candidate) ->
       end
   end.
 
-extract(RBinary,Binaries) ->
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%% n-merge
+
+merge(Binary,Binaries) ->
+  merge(Binary,Binary,Binaries,Binaries,[]).
+
+merge(_,<<>>,_,_,Match) ->
+   {signal_binary_ops,merge,lists:reverse(Match)};
+merge(_,_,[],_,_) ->
+  false;
+merge(OrigBinary,Binary,[{First,_Register}|Rest],Binaries,Match) ->
+  case occurs_check(OrigBinary,First) of
+    true ->
+      case binary:longest_common_prefix([Binary,First]) of
+        N when N>1, N==byte_size(First) ->
+          RestBinary = binary:part(Binary,{N,byte_size(Binary)-N}),
+          merge(OrigBinary,RestBinary,Binaries,Binaries,[First|Match]);
+        _ ->
+          merge(OrigBinary,Binary,Rest,Binaries,Match)
+      end;
+    false -> 
+      merge(OrigBinary,Binary,Rest,Binaries,Match)
+  end.
+
+extract() ->
   unary_rewrite
     (fun (Binary,Candidate) ->
          case binary:match(Candidate,Binary) of
            nomatch ->
              false;
-           Match ->
-             {extract_from,[Candidate],{part,Match,'of',byte_size(Candidate)}}
+           {From,Length} ->
+             {signal_binary_ops,extract,[Candidate,From,Length]}
          end
-     end, RBinary,Binaries).
+     end).
 
-pad_with(RBinary,Binaries,Symbol) ->
+pad_one() ->
+  unary_rewrite
+    (fun (Binary,Candidate) ->
+         ByteSizeBinary = byte_size(Binary),
+         ByteSizeCandidate = byte_size(Candidate),
+         if
+           ByteSizeCandidate == ByteSizeBinary-1 ->
+             PadSymbol = binary:last(Binary),
+             {signal_binary_ops,pad,[Candidate,PadSymbol,1]};
+           true ->
+             false
+         end
+     end).
+             
+
+pad_with(Symbol) ->
   unary_rewrite
     (fun (Binary,Candidate) ->
          ByteSizeBinary = byte_size(Binary),
          ByteSizeCandidate = byte_size(Candidate),
          if
            ByteSizeCandidate < ByteSizeBinary ->
-             NumBytes =
-               ByteSizeBinary-ByteSizeCandidate,
-             PaddedCandidate = 
-               pad_binary(Candidate,NumBytes,Symbol),
-             if
-               Binary == PaddedCandidate ->
-                 {padded_with,[Candidate],{pad,Symbol,count,NumBytes}};
-               true ->
-                 false
-             end;
+             return_if_eq
+               (Binary,
+                {signal_binary_ops,pad,
+                 [Candidate,Symbol,ByteSizeBinary-ByteSizeCandidate]});
            true -> false
          end
-     end, RBinary, Binaries).
+     end).
 
-pad_generic(RBinary,Binaries) ->
+xor_with_pad(Symbol) ->
   unary_rewrite
     (fun (Binary,Candidate) ->
-         ByteSizeBinary = byte_size(Binary),
-         ByteSizeCandidate = byte_size(Candidate),
-         if
-           ByteSizeCandidate+1 == ByteSizeBinary ->
-             case binary:match(Binary,Candidate) of
-               {0,ByteSizeCandidate} ->
-                 {padded_with,[Candidate],{pad,binary:last(Candidate),count,1}};
-               nomatch ->
-                 false
-             end;
-           true -> false
-         end
-     end, RBinary, Binaries).
+         return_if_eq
+           (Binary,
+            {signal_binary_ops,xor_words_with_pad,[Candidate,Symbol]})
+     end).
 
-pad_binary(Binary,0,_Symbol) ->
-  Binary;
-pad_binary(Binary,N,Symbol) when N>0 ->
-  pad_binary(<<Binary/binary,Symbol>>,N-1,Symbol).
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%% enoise_trace:noisy_trace().
-%%
-%% enoise_trace:register_binaries("enoise.trace").
-%% enoise_trace:compose_binaries(enoise_trace:get_trace("enoise.trace")).
-%% enoise_trace:show_registered_trace(B).
-%% enoise_trace:print_binary_register().
-%% 
-
-%% enoise_trace:traceback_test().
-   
-%% f(B), f(C), B = enoise_trace:trace_make_call_deterministic(enoise_trace:get_trace("enoise.trace")), enoise_trace:register_binaries(B), C = enoise_trace:trace_make_call_deterministic(B), enoise_trace:compose_binaries(B), enoise_trace:traceback_test().
-
-%% f(A), f(B), enoise_trace:register_binaries("enoise.trace"), enoise_trace:print_array(enoise_trace:get_trace("enoise.trace"),false), B = enoise_trace:trace_make_call_deterministic(enoise_trace:get_trace("enoise.trace")), enoise_trace:print_array(B,false).
-%%                       
-
-
-%% f(A),f(B),f(Predefined), Predefined = [{<<0,8,0,0,3>>,'Prologue'},{<<64,168,119,119,151,194,94,141,86,245,144,220,78,53,243,231,168,216,66,199,49,148,202,117,98,40,61,109,170,37,133,122>>,'ClientPrivKey'},{<<115,39,86,77,44,85,192,176,202,11,4,6,194,144,127,123, 34,67,62,180,190,232,251,5,216,168,192,190,134,65,13,64>>,'ClientPubKey'},{<<30,231,212,22,139,223,244,70,37,202,104,94,227,212,90,247,244,208,231,176,178,140,100,129,16,101,82,39,31,130,145,122>>,'ServerPubKey'}], B = enoise_trace:trace_make_call_deterministic(enoise_trace:get_trace("enoise.trace")), enoise_trace:register_binaries(B,Predefined), enoise_trace:compose_binaries(B), enoise_trace:traceback_test(), enoise_trace:show_registered_trace(B), enoise_trace:print_binary_register().
-%%
+return_if_eq(Binary,MFA={M,F,A}) ->
+  case Binary == apply(M,F,A) of
+    true ->
+      MFA;
+    false ->
+      false
+  end.
