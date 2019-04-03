@@ -1,6 +1,7 @@
 -module(signal_extract_utils). 
 
 -export([put/2,get/1,to_list/0,ensure_open/0,open_clean_db/0]).
+-export([cmd/1,cmd_with_status/1]).
 
 put(Key,Value) ->
   ensure_open(),
@@ -67,3 +68,44 @@ open_clean_db() ->
   ensure_open(),
   ets:delete_all_objects(?MODULE).
 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+cmd(Command) ->
+  {Status,Result} = cmd_with_status(Command),
+  if
+    Status =/= 0 ->
+      io:format
+        ("command ~s failed with exit code ~p:~n  ~s~n",
+         [Command,Status,Result]),
+      error({bad,Command,Status});
+    true ->
+      ok
+  end.
+
+cmd_with_status(Command) ->
+  Port = open_port({spawn, Command}, [stream, in, eof, hide, exit_status, stderr_to_stdout]),
+  get_data(Port, []).
+
+get_data(Port, Sofar) ->
+    receive
+    {Port, {data, Bytes}} ->
+        get_data(Port, [Sofar|Bytes]);
+      {Port, eof} ->
+        Port ! {self(), close},
+        receive
+        {Port, closed} ->
+            true
+        end,
+        receive
+        {'EXIT',  Port,  _} ->
+            ok
+        after 1 ->              % force context switch
+            ok
+        end,
+        ExitCode =
+            receive
+            {Port, {exit_status, Code}} ->
+                Code
+        end,
+        {ExitCode, lists:flatten(lists:reverse(Sofar))}
+    end.

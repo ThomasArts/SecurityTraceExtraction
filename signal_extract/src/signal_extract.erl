@@ -1,7 +1,7 @@
 -module(signal_extract).
 
 -export([noisy_trace/0,register_binaries/2,trace_make_call_deterministic/1]).
--export([get_trace/1,compose_binaries/1,traceback_test/0,print_array/2]).
+-export([get_trace/1,compose_binaries/1,traceback_experiment/0,print_array/2]).
 -export([print_binary_register/0,show_trace/1,show_registered_trace/1]).
 
 -compile(export_all).
@@ -10,6 +10,9 @@
 %% rebar3 as test shell
 
 noisy_trace() ->
+  noisy_trace("enoise.trace").
+
+noisy_trace(TraceFileName) ->
   EnoiseModules = 
     [
      enoise, 
@@ -20,26 +23,17 @@ noisy_trace() ->
   LoadModules =
     [
      enacl, enacl_nif, unicode_util, gen_tcp, inet_tcp, signal_extract_utils, gen, gen_server,
-     enoise_crypto_basics, signal_extract_utils, enoise_xk_test
+     enoise_crypto_basics, signal_extract_utils, enoise_xk_test, code, file, base64, io
     ],
   lists:foreach(fun code:ensure_loaded/1, EnoiseModules++LoadModules),
-  %% Tests = test_utils:noise_test_filter(test_utils:noise_test_vectors()),
-  %% N = rand:uniform(length(Tests)),
-  %% N = 5,
-  %% Test = lists:nth(N,Tests),
-  %% io:format
-  %% ("Running noise test vector~n  ~p~n~n",
-  %% [Test]),
-  test(fun () -> 
-          enoise_xk_test:client_test() 
-           %% enoise_tests:noise_interactive(Test) 
-       end, 
-       %%[enacl,enacl_nif] ++ 
-       EnoiseModules
-      ).
+  test
+    (
+    fun () -> enoise_xk_test:client_test() end, 
+    EnoiseModules,
+    TraceFileName
+   ).
 
 do_trace(TracedPid,ToPid,Modules) ->
-  %%erlang:trace_pattern({'_','_','_'}, true, [local]),
   erlang:trace(TracedPid,true,
                [
                 %%call,arity,return_to,
@@ -53,13 +47,13 @@ do_trace(TracedPid,ToPid,Modules) ->
                ]),
   erlang:trace_pattern({'_', '_', '_'}, [{'_', [], [{return_trace}]}], [global]),
   erlang:trace_pattern({enacl_nif, '_', '_'}, false, []),
-  lists:foreach(fun (Module) -> 
-                    erlang:trace_pattern({Module, '_', '_'}, [{'_', [], [{return_trace}]}], [local]) 
-                end,
-                Modules).
- %%erlang:trace_pattern({'_','_','_'}, [], [local]).
+  lists:foreach
+    (fun (Module) -> 
+         erlang:trace_pattern({Module, '_', '_'}, [{'_', [], [{return_trace}]}], [local]) 
+     end,
+     Modules).
 
-test(F, Modules) ->
+test(F, Modules, TraceFileName) ->
   Self = self(),
   Tracer = spawn(fun () -> tracer(Self) end),
   Computer = spawn(fun () -> compute(F,Self) end),
@@ -72,7 +66,7 @@ test(F, Modules) ->
     {Computer, stopped, Value} -> 
       io:format("computed value ~p~n",[Value]), 
       timer:sleep(5000),
-      Tracer ! {stop, self(), "enoise.trace"},
+      Tracer ! {stop, self(), TraceFileName},
       receive
         {tracer_stopped, Tracer} -> ok
       end
@@ -104,6 +98,56 @@ get_trace(FileName) ->
   case binary_to_term(B) of
     {trace,L} ->
       array:from_list(L)
+  end.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+analyze_trace_file(FileName) ->
+
+  %% Later we should generalise this...
+  Trace = get_trace(FileName),
+  KeyDir = code:priv_dir(signal_extract)++"/testing_keys",
+  ClientPrivKey = get_key("client_key_25519",KeyDir,priv),
+  ClientPubKey  = get_key("client_key_25519",KeyDir,pub),
+  ServerPubKey  = get_key("server_key_25519",KeyDir,pub),
+  Prologue = <<0,8,0,0,3>>,
+  
+  PredefinedBinaries = 
+    [
+     {Prologue,'Prologue'},
+     {ClientPrivKey,'ClientPrivateKey'},
+     {ClientPubKey,'ClientPublicKey'},
+     {ServerPubKey,'ServerPublicKey'}
+    ],
+
+  io:format("~n~nDeterminizing trace...~n"),
+  DetTrace = signal_extract:trace_make_call_deterministic(Trace),
+  
+  io:format("~n~nGiving names to binaries (and finding call sites)...~n"),
+  signal_extract:register_binaries(DetTrace,PredefinedBinaries),
+  
+  io:format("~n~nTrying to derive binaries using rewriting...~n"),
+  signal_extract:compose_binaries(DetTrace),
+  
+  io:format("~n~n~nTrace:~n~n"),
+  signal_extract:show_registered_trace(DetTrace),
+  
+  io:format("~n~n~nBinary definitions:~n~n"),
+  signal_extract:print_binary_register(),
+  
+  io:format("~n~n~nTracing back calls to enoise:gen_tcp_send:~n~n"),
+  signal_extract:traceback_experiment().
+
+get_key(KeyFileName,KeyDir,Type) ->
+  FilePath = KeyDir++"/"++KeyFileName++if Type==priv -> ""; Type==pub -> ".pub" end,
+  case file:read_file(FilePath) of
+    {ok,Base64Bin} when Type==pub -> 
+      base64:decode(Base64Bin);
+    {ok,Bin} when Type==priv -> 
+      Bin;
+    _ ->
+      io:format("~n*** Error: could not read key file ~s~n",[FilePath]),
+      error(bad)
   end.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -498,7 +542,7 @@ extract_call({trace_ts,_,call,Call,_}) ->
 extract_return({trace_ts,_,return_from,_,Value,_}) ->
   Value.
 
-traceback_test() ->
+traceback_experiment() ->
   A = get_trace("enoise.trace"),
   traceback
     (fun (Time,Event) -> 

@@ -10,15 +10,22 @@ Build
 
 First download and compile [noise-c](https://github.com/rweather/noise-c) -- an
 implementation of the noise protocol in the C programming language. In the following we
-assume that it was downloaded in the directory ../noise-c.
+assume that it was downloaded in the directory ../noise-c. Next build signal_extract tool:
 
-   $ rebar3 compile
+   $ cd signal_extract; rebar3 compile
 
 
 Obtaining a trace and analyzing it
 -----------------------------------
 
-   $ rebar3 ...
+   $ cd signal_extract
+   $ bash scripts/start_noise_c.sh                       # Starts noise-c command
+   $ rebar3 as test shell
+
+   > signal_extract:noisy_trace("enoise.trace").         % Saves trace in file enoise.trace
+
+   > signal_extract:analyze_trace_file("enoise.trace").  % Analyzes trace file
+   
 
 
 
