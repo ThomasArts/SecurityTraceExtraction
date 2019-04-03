@@ -19,13 +19,17 @@ Obtaining a trace and analyzing it
 -----------------------------------
 
    $ cd signal_extract
+   
    $ bash scripts/start_noise_c.sh                       # Starts noise-c command
+
    $ rebar3 as test shell
+
 
    > signal_extract:noisy_trace("enoise.trace").         % Saves trace in file enoise.trace
 
+
    > signal_extract:analyze_trace_file("enoise.trace").  % Analyzes trace file
    
-
+ 
 
 
