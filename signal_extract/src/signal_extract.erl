@@ -1,7 +1,7 @@
 -module(signal_extract).
 
 -export([noisy_trace/0,register_binaries/2,trace_make_call_deterministic/1]).
--export([get_trace/1,compose_binaries/1,traceback_experiment/1,print_array/2]).
+-export([get_trace/1,compose_binaries/1,traceback_experiment/2,print_array/2]).
 -export([print_binary_register/0,show_trace/1,show_registered_trace/1]).
 
 -compile(export_all).
@@ -115,28 +115,46 @@ analyze_trace_file(FileName) ->
   PredefinedBinaries = 
     [
      {Prologue,'Prologue'},
-     {ClientPrivKey,'ClientPrivateKey'},
-     {ClientPubKey,'ClientPublicKey'},
-     {ServerPubKey,'ServerPublicKey'}
+     {ClientPrivKey,'ClientPriv'},
+     {ClientPubKey,'ClientPub'},
+     {ServerPubKey,'ServerPub'},
+     {erlang:list_to_binary(["Noise","_","XK","_","25519","_","ChaChaPoly","_","BLAKE2b"]),'NoiseProt'}
     ],
 
   io:format("~n~nDeterminizing trace...~n"),
-  DetTrace = signal_extract:trace_make_call_deterministic(Trace),
+  DetTrace = trace_make_call_deterministic(Trace),
   
   io:format("~n~nGiving names to binaries (and finding call sites)...~n"),
-  signal_extract:register_binaries(DetTrace,PredefinedBinaries),
+  register_binaries(DetTrace,PredefinedBinaries),
   
   io:format("~n~nTrying to derive binaries using rewriting...~n"),
-  signal_extract:compose_binaries(DetTrace),
+  compose_binaries(DetTrace),
   
   io:format("~n~n~nTrace:~n~n"),
-  signal_extract:show_registered_trace(DetTrace),
+  show_registered_trace(DetTrace),
   
   io:format("~n~n~nBinary definitions:~n~n"),
-  signal_extract:print_binary_register(),
+  print_binary_register(),
   
   io:format("~n~n~nTracing back calls to enoise:gen_tcp_send:~n~n"),
-  signal_extract:traceback_experiment(PredefinedBinaries).
+  Traceback =
+    traceback_calls
+      (fun (_Time,Event) -> 
+           case Event of
+             {trace_ts,_,call,{enoise,gen_tcp_snd_msg,_},_} -> true;
+             _ -> false
+           end
+       end,
+       PredefinedBinaries,
+       DetTrace),
+  traceback_experiment(Traceback,PredefinedBinaries),
+  
+  io:format("~n~n~nGenerating graphviz model:~n~n"),
+  io:format("Traceback:~n~p~n",
+            [graphviz_traceback("trace1.dot",Traceback,1,PredefinedBinaries)]),
+  io:format("Traceback:~n~p~n",
+            [graphviz_traceback("trace2.dot",Traceback,2,PredefinedBinaries)]),
+  ok.
 
 get_key(KeyFileName,KeyDir,Type) ->
   FilePath = KeyDir++"/"++KeyFileName++if Type==priv -> ""; Type==pub -> ".pub" end,
@@ -435,38 +453,35 @@ call_limits(Pid,I,A) ->
   
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
+traceback_calls(EventRecognizer,Predefs,A) ->
+  collect_at_calls
+    (EventRecognizer,A,
+     fun (Call,Time,_,_) -> 
+         {ExpandedCall,NewBinaries} = expand_term(Call,[]),
+         {{ExpandedCall,Call,Time},trace_back_binaries(NewBinaries,Predefs,[])}
+     end).
 
-
-traceback(EventRecognizer,Predefs,A) ->
-  apply_in_trace(EventRecognizer,A,
-                 fun (MFA,Time,_,_) -> 
-                     {ExpandedMFA,Binaries} = expand_term(MFA,[]),
-                     io:format
-                       ("~n~n~nStarting at ~p with call ~s:~n",
-                        [Time,print_full_call(ExpandedMFA)]),
-                     trace_back_binaries(Binaries,Predefs,[])
-                 end).
-
-apply_in_trace(EventRecognizer,A,F) ->
-  apply_in_trace(EventRecognizer,0,array:size(A),A,F).
-apply_in_trace(_EventRecognizer,I,Size,_A,_F) when I>=Size ->
-  ok;
-apply_in_trace(EventRecognizer,I,Size,A,F) ->
+collect_at_calls(EventRecognizer,A,F) ->
+  collect_at_calls(EventRecognizer,0,array:size(A),A,F).
+collect_at_calls(_EventRecognizer,I,Size,_A,_F) when I>=Size ->
+  [];
+collect_at_calls(EventRecognizer,I,Size,A,F) ->
   Event = array:get(I,A),
-  case EventRecognizer(I,Event) of
-    true ->
-      {trace_ts,_,call,Call,_} = Event,
-      F(Call,I,Size,A);
-    false ->
-      ok
-  end,
-  apply_in_trace(EventRecognizer,I+1,Size,A,F).
+  Info = 
+    case EventRecognizer(I,Event) of
+      true ->
+        {trace_ts,_,call,Call,_} = Event,
+        [F(Call,I,Size,A)];
+      false ->
+        []
+    end,
+  Info ++ collect_at_calls(EventRecognizer,I+1,Size,A,F).
   
 trace_back_binaries([],_Predefs,_Seen) ->
-  ok;
+  [];
 trace_back_binaries([Binary|Binaries],Predefs,Seen) ->
-  case lists:member(Binary,Seen) orelse lists:keyfind(Binary,1,Predefs)=/=false of
-    true -> 
+  case lists:keyfind(Binary,1,Predefs) of
+    {_,_} -> 
       trace_back_binaries(Binaries,Predefs,Seen);
     false -> 
       Register = get_binary(Binary),
@@ -474,53 +489,65 @@ trace_back_binaries([Binary|Binaries],Predefs,Seen) ->
         Register == undefined -> 
           trace_back_binaries(Binaries,Predefs,Seen);
         true ->
-          case binary_type(Register) of
-            consumed -> 
-              io:format
-                ("~nExternal? binary ~p~n~p~nconsumed by call at ~p~n  ~p~n",
-                 [
-                  subst_with_register(Binary),
-                  Binary,
-                  time(source(Register)),
-                  subst_with_register(extract_call(item(source(Register))))
-                 ]),
-              trace_back_binaries(Binaries,Predefs,[Binary|Seen]);
-            produced ->
-              ReturnString =
-                case Binary == extract_return(item(return(Register))) of
-                  true -> 
-                    "";
-                  false -> 
-                    io_lib:format
-                      ("returned as ~p~n",
-                       [
-                        subst_with_register
-                          (extract_return(item(return(Register))))
-                       ])
-                end,
-              {M,F,Args} = extract_call(item(source(Register))),
-              {ExpandedArgs,NewBinaries} = expand_terms(Args,Binaries),
-              io:format
-                ("~nBinary ~p produced at ~p by call~n  ~s~n~s",
-                 [
-                  subst_with_register(Binary),
-                  time(source(Register)),
-                  print_full_call({M,F,ExpandedArgs}),
-                  ReturnString
-                 ]),
-              trace_back_binaries(NewBinaries,Predefs,[Binary|Seen]);
-            rewrite ->
-              MFA = {_,_,_} = item(source(Register)),
-              {Term,NewBinaries} = expand_term(MFA,Binaries),
-              io:format
-                ("~p == ~s~n",
-                 [
-                  subst_with_register(Binary),print_call(Term)
-                 ]),
-              trace_back_binaries(NewBinaries,Predefs,Seen)
+          Name = name(Register),
+          case lists:member(Name,Seen) of
+            true -> 
+              trace_back_binaries(Binaries,Predefs,Seen);
+            false ->
+              case binary_type(Register) of
+                rewrite ->
+                  trace_back_binaries(Binaries,Predefs,Seen);
+                _ ->
+                  Time = 
+                    time(source(Register)),
+                  {Consumed,Produced} = 
+                    binaries_located_at(Time,Predefs),
+                  MFA = {M,F,Args} = 
+                    extract_call(item(source(Register))),
+                  {ExpandedArgs,NewBinaries} = 
+                    expand_terms(Args,Binaries),
+                  Return = 
+                    subst_with_register(extract_return(item(return(Register)))),
+                  Item =
+                    {
+                    'call', 
+                    Time, 
+                    {M,F,ExpandedArgs}, 
+                    MFA,
+                    subst_with_register(Return),
+                    Consumed, 
+                    Produced
+                   },
+                  NewSeen = Consumed ++ Produced ++ Seen,
+                  [Item|trace_back_binaries(NewBinaries,Predefs,NewSeen)]
+              end
           end
       end
   end.
+
+binaries_located_at(Time,Predefs) ->
+  lists:foldl
+    (fun ({Binary,Register},Acc={Cons,Prod}) ->
+         case Time==time(source(Register)) of
+           true ->
+             case lists:keyfind(Binary,1,Predefs) of
+               false ->
+                 Name = name(Register),
+                 Type = binary_type(Register),
+                 io:format("time ~p: name=~p type=~p ~n",[Time,Name,Type]),
+                 case Type of
+                   consumed ->
+                     {[Name|Cons],Prod};
+                   produced ->
+                     {Cons,[Name|Prod]};
+                   _ ->
+                     Acc
+                 end;
+               true -> Acc
+             end;
+           false -> Acc
+         end
+     end, {[],[]}, registers()).
 
 expand_terms([],Binaries) ->
   {[],Binaries};
@@ -585,18 +612,102 @@ extract_call({trace_ts,_,call,Call,_}) ->
 extract_return({trace_ts,_,return_from,_,Value,_}) ->
   Value.
 
-traceback_experiment(PredefinedBinaries) ->
-  A = get_trace("enoise.trace"),
-  traceback
-    (fun (_Time,Event) -> 
-         case Event of
-           {trace_ts,_,call,{enoise,gen_tcp_snd_msg,_},_} -> true;
-           _ -> false
-         end
-     end,
-     PredefinedBinaries,
-     A).
+traceback_experiment(Traceback,_PredefinedBinaries) ->
+  lists:foreach
+    (fun ({{OriginatingCall,_,_Time},VariableTrace}) ->
+         io:format
+           ("~n~n------------------------------------------------------~n"),
+         io:format
+           ("Starting with ~s:~n~n",[print_full_call(OriginatingCall)]),
+         lists:foreach
+           (fun ({call, Time, Call, _, Return, Consumed, Produced}) ->
+                CallString = print_full_call(Call),
+                ReturnStr = 
+                  if
+                    is_atom(Return) -> "";
+                    true -> io_lib:format("  returned as ~p~n",[Return])
+                  end,
+                ConsumedStr = 
+                  if
+                    Consumed==[] -> "";
+                    true -> io_lib:format("  consumed binaries: ~p~n",[Consumed])
+                  end,
+                ProducedStr =
+                  case Produced of
+                    [] -> "";
+                    [Binary] -> atom_to_list(Binary) ++ " = ";
+                    Binaries -> io_lib:format("~p <- ",[Binaries])
+                  end,
+                io:format
+                  ("~s~s at time ~p~n~s~s~n",
+                   [ProducedStr,CallString,Time,ConsumedStr,ReturnStr])
+            end, VariableTrace)
+     end, Traceback).
 
+graphviz_traceback(Filename,Traceback,N,PredefinedBinaries) ->
+  {{ECall0,SCall0,_Time},NTrace} = lists:nth(N,Traceback),
+  CallInitState = 
+    {[],{state,1,ECall0,SCall0}},
+  PredefinedInitState =
+    {lists:map(fun ({_,Name}) -> Name end, PredefinedBinaries), 
+     {state, 0, {init,predefined,[]}, {init,predefined,[]}}},
+  {States,_} =
+    lists:foldl
+      (fun ({call, _Time, ECall, SCall, _Return, _Consumed, Produced}, Acc={S,I}) ->
+           if
+             Produced=/=[] ->
+               {[{Produced,{state,I,ECall,SCall}}|S], I+1};
+             true ->
+               Acc
+           end
+       end, {[CallInitState,PredefinedInitState],2}, NTrace),
+  Transitions = 
+    lists:foldl
+      (fun ({_,{state,I,_,TCall}}, T) ->
+           lists:flatmap
+             (fun (Binary) -> make_transition(I, Binary, States) end,
+              element(2,expand_term(TCall,[]))) ++ T
+       end, [], States),
+  {ok,F} = file:open(Filename,[write]),
+  io:format(F,"digraph example {\n",[]),
+  lists:foreach(fun ({_,{state,I,{_,Fun,_},_}}) ->
+                    if
+                      I=/=0 -> 
+                        io:format(F,"s~p [label=\"~p\"];~n",[I,Fun]);
+                      true ->
+                        ok
+                    end
+                end, States),
+  lists:foreach(fun ({From,Binary,To}) ->
+                    io:format(F,"s~p -> s~p [label=\"~p\"]~n",[From,To,Binary])
+                end, Transitions),
+  io:format(F,"}\n",[]),
+  file:close(F).
+
+make_transition(From,Binary,States) ->
+  case get_binary(Binary) of
+    undefined -> 
+      [];
+    Register ->
+      Name = name(Register),
+      case find_binary(Name,States) of
+        false ->
+          [];
+        {state,0,_,_} ->
+          [{From,Name,From}];
+        {state,I,_,_} ->
+          [{I,Name,From}]
+      end
+  end.
+
+find_binary(_,[]) ->
+  false;
+find_binary(Binary,[{Binaries,State}|Rest]) ->
+  case lists:member(Binary,Binaries) of
+    true -> State;
+    _ -> find_binary(Binary,Rest)
+  end.
+      
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 is_registered(Binary) ->
@@ -690,12 +801,24 @@ subst_with_register(Map) when is_map(Map) ->
 subst_with_register(T) ->
   T.
 
+num_sort(Name) ->
+  String = atom_to_list(Name),
+  case string:str(String,"Binary") of
+    0 -> 0;
+    _ -> list_to_integer(string:substr(String,7,length(String)-6))
+  end.
+
 registers() ->
-  lists:filter
-    (fun ({counter,_}) -> false; 
-         ({{nickname,_},_}) -> false; 
-         (_) -> true 
-     end, signal_extract_utils:to_list()).
+  lists:sort
+    (fun ({_,R1},{_,R2}) ->
+         num_sort(name(R1)) < num_sort(name(R2))
+     end, 
+     lists:filter
+       (fun ({counter,_}) -> false; 
+            ({{nickname,_},_}) -> false; 
+            (_) -> true 
+        end, 
+        signal_extract_utils:to_list())).
 
 binaries(B) when is_binary(B),  byte_size(B)>0 ->
   [B];
@@ -925,7 +1048,6 @@ pad_one() ->
          end
      end).
              
-
 pad_with(Symbol) ->
   unary_rewrite
     (fun (Binary,Candidate) ->
