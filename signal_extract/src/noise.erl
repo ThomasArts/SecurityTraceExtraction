@@ -434,7 +434,9 @@ execute_handshake(ProtocolName,Initiator,Prologue,{S,E,RS,RE},Handshake,Payloads
   execute_handshake(CommHandshake,Payloads,State).
 
 execute_handshake([],_Payloads,State) ->
-  {[],undefined,State};   %% Split
+  HS = State#state.handshakeState,
+  SS = HS#handshakeState.symmetricState,
+  {[], split(SS), State};
 execute_handshake([MessagePattern|RestMessagePatterns],Payloads,State) ->
   {Payload,RestPayloads} = 
     case Payloads of
@@ -568,13 +570,19 @@ test() ->
     <<0,8,0,0,3>>,
   Initiator = 
     true,
-  {Results,_,State} =
+  {Results,{CS1,CS2},State} =
     execute_handshake(ProtocolName,Initiator,Prologue,{s,undefined,undefined,undefined},Handshake,[]),
   io:format("~n~nResults:~n"),
   lists:foreach
     (fun (Result) ->
          io:format("~p~n~n",[Result])
      end, Results),
+  io:format
+    ("~nCS1:~n~p~n",
+     [CS1]),
+  io:format
+    ("~nCS2:~n~p~n",
+     [CS2]),
   io:format
     ("~nFinal state:~n~p~n",
      [State]).
