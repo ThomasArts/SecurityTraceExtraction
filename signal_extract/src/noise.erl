@@ -24,9 +24,10 @@
           e,
           rs,
           re,
-          message_patterns,
           initiator,
-          message_buffer=[],
+          output_buffer=[],
+          input_buffer,
+          payload_buffer=[],
           counter=0,  %% Numbering local ephemeral key pairs
           symmetricState = #symmetricState{}
         }).
@@ -39,6 +40,7 @@
           dh_spec,
           cipher_spec,
           hash_spec,
+          counter=0,  %% numbering read operations
           handshakeState = #handshakeState{}
         }).
 
@@ -114,6 +116,9 @@
 
 'REMOTE_STATIC'() ->
   {?FUNCTION_NAME,[]}.
+
+'INPUT_BUFFER'(N) ->
+  {?FUNCTION_NAME,[N]}.
 
 % ----------------------------------------------------------------------
 
@@ -238,12 +243,11 @@ return_and_modify_symmetricState(F,HandshakeState) ->
   {Term,SS} = F(HandshakeState#handshakeState.symmetricState),
   {Term,HandshakeState#handshakeState{symmetricState=SS}}.
 
-initialize(ProtocolName,HandshakePattern,Initiator,Prologue,S,E,RS,RE) ->
+initialize(ProtocolName,Handshake,Initiator,Prologue,S,E,RS,RE) ->
   HandshakeState =
     #handshakeState
     {
       initiator=Initiator,
-      message_patterns = messagePatterns(HandshakePattern),
       symmetricState = initializeSymmetric(ProtocolName)
     },
 
@@ -258,7 +262,7 @@ initialize(ProtocolName,HandshakePattern,Initiator,Prologue,S,E,RS,RE) ->
        HandshakeState5),
 
   PublicKeys = 
-    extractPublicKeysFromPreMessages(Initiator, HandshakePattern),
+    extractPublicKeysFromPreMessages(Initiator, Handshake),
 
   HandshakeState7 = 
     lists:foldl
@@ -280,99 +284,128 @@ initialize(ProtocolName,HandshakePattern,Initiator,Prologue,S,E,RS,RE) ->
      end, 
      HandshakeState7, PublicKeys).
 
-writeMessages([],[],HandshakeState) ->
-  HandshakeState;
-writeMessages(Payloads,[Message|Rest],HandshakeState) ->
-  HandshakeStateP =
-    case Message of
-      e ->
-        {Key,HandshakeState0} = generateEmpheralKeyPair(HandshakeState),
-        HandshakeState1 = HandshakeState0#handshakeState{e=Key},
-        PubE = 'PUBLIC-KEY'(HandshakeState1#handshakeState.e),
-        HandshakeState2 = message_append(PubE,HandshakeState1),
-        modify_symmetricState(fun (SS) -> mixHash(PubE,SS) end, HandshakeState2);
-      s ->
-        {Term,HandshakeState1} = 
-          return_and_modify_symmetricState
-            (fun (SS) -> encryptAndHash('PUBLIC-KEY'(HandshakeState#handshakeState.s),SS) end,
-             HandshakeState),
-        message_append(Term,HandshakeState1);
-      ee ->
-        Term = 'DH'(HandshakeState#handshakeState.e,HandshakeState#handshakeState.re),
-        modify_symmetricState(fun (SS) -> mixKey(Term,SS) end, HandshakeState);
-      es ->
-        Term = 
-          if
-            HandshakeState#handshakeState.initiator ->
-              'DH'(HandshakeState#handshakeState.e,HandshakeState#handshakeState.rs);
-            true ->
-              'DH'(HandshakeState#handshakeState.s,HandshakeState#handshakeState.re)
-          end,
-        modify_symmetricState(fun (SS) -> mixKey(Term,SS) end, HandshakeState);
-      se ->
-        Term = 
-          if
-            HandshakeState#handshakeState.initiator ->
-              'DH'(HandshakeState#handshakeState.s,HandshakeState#handshakeState.re);
-            true ->
-              'DH'(HandshakeState#handshakeState.e,HandshakeState#handshakeState.rs)
-          end,
-        modify_symmetricState(fun (SS) -> mixKey(Term,SS) end, HandshakeState);
-      ss ->
-        Term = 'DH'(HandshakeState#handshakeState.s,HandshakeState#handshakeState.rs),
-        modify_symmetricState(fun (SS) -> mixKey(Term,SS) end, HandshakeState)
-    end,
-  {Payload,Payloads1} =
-    case Payloads of
-      [] -> {<<>>,[]};
-      [First|Rest] -> {First,Rest}
-    end,
+writeMessage(Message,HandshakeState) ->
+  case Message of
+    e ->
+      {Key,HandshakeState0} = generateEmpheralKeyPair(HandshakeState),
+      HandshakeState1 = HandshakeState0#handshakeState{e=Key},
+      PubE = 'PUBLIC-KEY'(HandshakeState1#handshakeState.e),
+      HandshakeState2 = message_append(PubE,HandshakeState1),
+      modify_symmetricState(fun (SS) -> mixHash(PubE,SS) end, HandshakeState2);
+    s ->
+      {Term,HandshakeState1} = 
+        return_and_modify_symmetricState
+          (fun (SS) -> encryptAndHash('PUBLIC-KEY'(HandshakeState#handshakeState.s),SS) end,
+           HandshakeState),
+      message_append(Term,HandshakeState1);
+    ee ->
+      Term = 'DH'(HandshakeState#handshakeState.e,HandshakeState#handshakeState.re),
+      modify_symmetricState(fun (SS) -> mixKey(Term,SS) end, HandshakeState);
+    es ->
+      Term = 
+        if
+          HandshakeState#handshakeState.initiator ->
+            'DH'(HandshakeState#handshakeState.e,HandshakeState#handshakeState.rs);
+          true ->
+            'DH'(HandshakeState#handshakeState.s,HandshakeState#handshakeState.re)
+        end,
+      modify_symmetricState(fun (SS) -> mixKey(Term,SS) end, HandshakeState);
+    se ->
+      Term = 
+        if
+          HandshakeState#handshakeState.initiator ->
+            'DH'(HandshakeState#handshakeState.s,HandshakeState#handshakeState.re);
+          true ->
+            'DH'(HandshakeState#handshakeState.e,HandshakeState#handshakeState.rs)
+        end,
+      modify_symmetricState(fun (SS) -> mixKey(Term,SS) end, HandshakeState);
+    ss ->
+      Term = 'DH'(HandshakeState#handshakeState.s,HandshakeState#handshakeState.rs),
+      modify_symmetricState(fun (SS) -> mixKey(Term,SS) end, HandshakeState)
+  end.
+
+writeMessages([],Payload,HandshakeState) ->
   {EncryptedTerm,HandshakeStateEAH} = 
     return_and_modify_symmetricState
-    (fun (SS) -> encryptAndHash(Payload,SS) end, HandshakeStateP),
-  writeMessages(Payloads1,Rest,message_append(EncryptedTerm,HandshakeStateEAH)).
-
-readMessages(Payloads,Messages,HandshakeState) ->
-  HandshakeState.
+      (fun (SS) -> encryptAndHash(Payload,SS) end, HandshakeState),
+  message_append(EncryptedTerm,HandshakeStateEAH);
+writeMessages([Message|Messages],Payload,HandshakeState) ->
+  HS = writeMessage(Message,HandshakeState),
+  writeMessages(Messages,Payload,HS).
 
 message_append(Msg,HandshakeState) ->
   HandshakeState#handshakeState
-    {message_buffer=HandshakeState#handshakeState.message_buffer++[Msg]}.
+    {output_buffer=HandshakeState#handshakeState.output_buffer++[Msg]}.
+
+readMessage(Message,HandshakeState) ->
+  HandshakeState.
+
+readMessages([],HandshakeState) ->
+  %% Get payload
+  HandshakeState;
+readMessages([Message|Messages],HandshakeState) ->
+  HS = readMessage(Message,HandshakeState),
+  readMessages(Messages,HS).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-execute_message_pattern(Payloads,State) ->
-  HS = State#state.handshakeState,
-  HSFinal =
-    case HS#handshakeState.message_patterns of
+execute_handshake(ProtocolName,Initiator,Prologue,{S,E,RS,RE},Handshake,Payloads) ->
+  State = #state{handshakeState=initialize(ProtocolName,Handshake,Initiator,Prologue,S,E,RS,RE)},
+  {_PreHandshake,CommHandshake} = split_handshake(Handshake),
+  execute_handshake(CommHandshake,Payloads,State).
+
+execute_handshake([],_Payloads,State) ->
+  {[],undefined,State};   %% Split
+execute_handshake([MessagePattern|RestMessagePatterns],Payloads,State) ->
+  {Payload,RestPayloads} = 
+    case Payloads of
+      [FPayload|RPayloads] ->
+        {FPayload,RPayloads};
       [] ->
-        State;
-      [MessagePattern|Rest] ->
-        HS1 = HS#handshakeState{message_patterns=Rest},
-        Initiator = HS1#handshakeState.initiator,
-        Messages = 
-          case MessagePattern of
-            {snd,Msgs} -> Msgs;
-            {rcv,Msgs} -> Msgs
-          end,
-        IsSend =
-          case MessagePattern of
-            {snd,_} -> true;
-            _ -> false
-          end,
-        if
-          (IsSend and Initiator) or (not(IsSend) and not(Initiator)) ->
-            writeMessages(Payloads,Messages,HS1);
-          true ->
-            readMessages(Payloads,Messages,HS1)
-        end
+        {[],[]}
     end,
-  State#state{handshakeState=HSFinal}.
+  {Result,NewState} = 
+    execute_message_pattern(MessagePattern,Payload,State),
+  {Results,Split,FinalState} = 
+    execute_handshake(RestMessagePatterns,RestPayloads,NewState),
+  {[Result|Results],Split,FinalState}.
+
+execute_message_pattern(MessagePattern,Payload,State) ->
+  HS = State#state.handshakeState,
+  IsInitiator = HS#handshakeState.initiator,
+  Messages = 
+    case MessagePattern of
+      {snd,Msgs} -> Msgs;
+      {rcv,Msgs} -> Msgs
+    end,
+  IsSender =
+    case MessagePattern of
+      {snd,_} -> true;
+      _ -> false
+    end,
+  IsWriter = 
+    (IsSender and IsInitiator) or (not(IsSender) and not(IsInitiator)),
+  if
+    IsWriter -> 
+      HS1 = writeMessages(Messages,Payload,HS),
+      {
+        HS1#handshakeState.output_buffer, 
+        State#state{handshakeState = HS1#handshakeState{output_buffer=[]}}
+      };
+    true -> 
+      ReadCounter = State#state.counter,
+      HS1 = HS#handshakeState{input_buffer = 'INPUT_BUFFER'(ReadCounter)},
+      HS2 = readMessages(Messages,HS1),
+      {
+        HS2#handshakeState.payload_buffer,
+        State#state{handshakeState = HS2#handshakeState{input_buffer=undefined,payload_buffer=[]}}
+      }
+  end.
 
 % ----------------------------------------------------------------------
 
 extractPublicKeysFromPreMessages(Initiator,HandshakePattern) ->  
-  {PreMessages, _} = HandshakePattern,
+  {PreMessages,_} = split_handshake(HandshakePattern),
   InitiatorKeys = extractPublicKeys(Initiator,PreMessages,snd),
   ResponderKeys = extractPublicKeys(Initiator,PreMessages,rcv),
   InitiatorKeys ++ ResponderKeys.
@@ -417,11 +450,6 @@ generateEmpheralKeyPair(HandshakeState) ->
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-init(ProtoSpec,Initiator,Prologue, S, E, RS, RE) ->
-  {ProtocolName, HandshakePattern, InitState} = parseProtocolSpec(ProtoSpec),
-  InitState#state
-    {handshakeState=initialize(ProtocolName, HandshakePattern, Initiator, Prologue, S, E, RS, RE)}.
-
 parseProtocolSpec({PatternName,DHSpec,CipherSpec,HashSpec}) ->
   ProtocolName = PatternName++"_"++DHSpec++"_"++CipherSpec++"_"++HashSpec,
   HandshakePattern = find_handshake_pattern(PatternName),
@@ -435,6 +463,9 @@ parseProtocolSpec({PatternName,DHSpec,CipherSpec,HashSpec}) ->
       hash_spec = list_to_atom(HashSpec)
     }
   }.
+
+split_handshake(Handshake) ->
+  Handshake.
 
 find_handshake_pattern(HandshakeName) ->
   if
@@ -452,21 +483,22 @@ find_handshake_pattern(HandshakeName) ->
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 test() ->
-  State0 =
-    init
-      (
-      {"XK","25519","ChaChaPoly","BLAKE2b"},
-      true, 
-      <<0,8,0,0,3>>, 
-      s, undefined, undefined, undefined
-     ),
-  State = execute_message_pattern([],State0),
+  {ProtocolName, Handshake, _InitialState} = 
+    parseProtocolSpec({"XK","25519","ChaChaPoly","BLAKE2b"}),
+  Prologue = 
+    <<0,8,0,0,3>>,
+  Initiator = 
+    true,
+  {Results,_,State} =
+    execute_handshake(ProtocolName,Initiator,Prologue,{s,undefined,undefined,undefined},Handshake,[]),
+  io:format("~n~nResults:~n"),
+  lists:foreach
+    (fun (Result) ->
+         io:format("~p~n~n",[Result])
+     end, Results),
   io:format
-    ("~p~n",
-     [(State#state.handshakeState)#handshakeState.message_buffer]).
+    ("~nFinal state: ~p~n",
+     [State]).
 
-
-
-           
 
 
