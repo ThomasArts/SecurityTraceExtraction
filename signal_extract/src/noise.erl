@@ -1,32 +1,45 @@
 -module(noise).
 
--compile(export_all).
+-export([test/0]).
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%% State definition, mixing handshake state, symmetric state,
-%% and cipher state.
-%%
-
--record(state,
+-record(cipherState,
         {
           k,
-          n,
+          n
+        }).
+
+-record(symmetricState,
+        {
           ck,
           h,                     
+          cipherState = #cipherState{}
+        }).
+
+-record(handshakeState,
+        {
           s,
           e,
           rs,
           re,
           message_patterns,
           initiator,
-          hash_len=64,
-          dh_len=32,
-          block_len=128,
-          dh_spec,cipher_spec,hash_spec,
           message_buffer=[],
-          counter=0
+          counter=0,  %% Numbering local ephemeral key pairs
+          symmetricState = #symmetricState{}
+        }).
+
+-record(state,
+        {
+          hash_len,
+          dh_len,
+          block_len,
+          dh_spec,
+          cipher_spec,
+          hash_spec,
+          handshakeState = #handshakeState{}
         }).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -36,64 +49,88 @@
 
 % ----------------------------------------------------------------------
 
-'DH'(KeyName1,KeyName2,State) ->
-  {State#state.dh_spec,?FUNCTION_NAME,['PRIVATE-KEY'(KeyName1,State),'PUBLIC-KEY'(KeyName2,State)]}.
+'DH'(KeyName1,KeyName2) ->
+  {?FUNCTION_NAME,['PRIVATE-KEY'(KeyName1),'PUBLIC-KEY'(KeyName2)]}.
 
-'DHLEN'(State,State) ->
-  {State#state.dh_spec,?FUNCTION_NAME,State#state.dh_len}.
-
-% ----------------------------------------------------------------------
-
-'ENCRYPT'(K,N,Ad,PlainText,State) ->
-  {State#state.cipher_spec,?FUNCTION_NAME,[K,N,Ad,PlainText]}.
-
-'DECRYPT'(K,N,Ad,CipherText,State) ->
-  {State#state.cipher_spec,?FUNCTION_NAME,[K,N,Ad,CipherText]}.
-
-'REKEY'(K,State) ->
-  {State#state.cipher_spec,?FUNCTION_NAME,[K]}.
+'DHLEN'() ->
+  {?FUNCTION_NAME,[]}.
 
 % ----------------------------------------------------------------------
 
-'HASH'(Data,State) ->
-  {State#state.hash_spec,?FUNCTION_NAME,Data}.
+'ENCRYPT'(K,N,Ad,PlainText) ->
+  {?FUNCTION_NAME,[K,N,Ad,PlainText]}.
 
-'HASHLEN'(State) ->
-  {State#state.hash_spec,?FUNCTION_NAME, [State#state.hash_len]}.
+'DECRYPT'(K,N,Ad,CipherText) ->
+  {?FUNCTION_NAME,[K,N,Ad,CipherText]}.
 
-'BLOCKLEN'(State) ->
-  {State#state.hash_spec,?FUNCTION_NAME,[State#state.block_len]}.
+'REKEY'(K) ->
+  {?FUNCTION_NAME,[K]}.
 
-'HMAC-HASH'(Key,Text,State) ->
-  {State#state.hash_spec,?FUNCTION_NAME,[Key,Text]}.
+% ----------------------------------------------------------------------
 
-'HKDF'(ChainingKey,InputKeyMaterial,NumOutputs,State) ->
-  TempKey = 'HMAC-HASH'(ChainingKey,InputKeyMaterial,State),
-  Output1 = 'HMAC-HASH'(TempKey,16#1,State),
-  Output2 = 'HMAC-HASH'(TempKey,'MERGE'(Output1,16#2),State),
+'HASH'(Data) ->
+  {?FUNCTION_NAME, [Data]}.
+
+'HASHLEN'() ->
+  {?FUNCTION_NAME, []}.
+
+'BLOCKLEN'() ->
+  {?FUNCTION_NAME,[]}.
+
+'HMAC-HASH'(Key,Text) ->
+  {?FUNCTION_NAME,[Key,Text]}.
+
+'HKDF'(ChainingKey,InputKeyMaterial,NumOutputs) ->
+  TempKey = 'HMAC-HASH'(ChainingKey,InputKeyMaterial),
+  Output1 = 'HMAC-HASH'(TempKey,16#1),
+  Output2 = 'HMAC-HASH'(TempKey,'MERGE'(Output1,16#2)),
   if
     NumOutputs==2 ->
       {Output1,Output2};
     true ->
-      Output3 = 'HMAC-HASH'(TempKey,'MERGE'(Output2,16#3),State),
+      Output3 = 'HMAC-HASH'(TempKey,'MERGE'(Output2,16#3)),
       {Output1,Output2,Output3}
   end.
 
 % ----------------------------------------------------------------------
 
-'PRIVATE-KEY'(KeyName,State) ->
-  {?FUNCTION_NAME,[get_key(KeyName,State)]}.
+'PRIVATE-KEY'(KeyName) ->
+  {?FUNCTION_NAME,[KeyName]}.
 
-'PUBLIC-KEY'(KeyName,State) ->
-  {?FUNCTION_NAME,[get_key(KeyName,State)]}.
+'PUBLIC-KEY'(KeyName) ->
+  {?FUNCTION_NAME,[KeyName]}.
+
+'GENERATE_KEYPAIR'(Counter) ->
+  {?FUNCTION_NAME,[Counter]}.
+
+'LOCAL_EPHEMERAL'() ->
+  {?FUNCTION_NAME,[]}.
+
+'REMOTE_EPHEMERAL'() ->
+  {?FUNCTION_NAME,[]}.
+
+'LOCAL_STATIC'() ->
+  {?FUNCTION_NAME,[]}.
+
+'REMOTE_STATIC'() ->
+  {?FUNCTION_NAME,[]}.
 
 % ----------------------------------------------------------------------
 
+'IF'(Condition,Expr1,Expr2) ->
+  {?FUNCTION_NAME,[Condition,Expr1,Expr2]}.
+
+'EQ'(Expr1,Expr2) ->
+  {?FUNCTION_NAME,[Expr1,Expr2]}.
+
+'LEQ'(Expr1,Expr2) ->
+  {?FUNCTION_NAME,[Expr1,Expr2]}.
+
 'MERGE'(Term1,Term2) ->
-  {?FUNCTION_NAME,Term1,Term2}.
+  {?FUNCTION_NAME,[Term1,Term2]}.
 
 'PAD_TO_USING'(Term,Len,Pad) ->
-  {?FUNCTION_NAME,Term,Len,Pad}.
+  {?FUNCTION_NAME,[Term,Len,Pad]}.
 
 'TRUNCATE'(Text,Size) ->
   {?FUNCTION_NAME,[Text,Size]}.
@@ -102,86 +139,89 @@
 
 %% CipherState functions
 
-initializeKey(Key,State) ->
-  State#state{k=Key,n=0}.
+initializeKey(Key) ->
+  #cipherState{k=Key,n=0}.
 
-hasKey(State) ->
-  State#state.k =/= empty.
+hasKey(CipherState) ->
+  CipherState#cipherState.k =/= empty.
 
-setNonce(Nonce,State) ->
-  State#state{n = Nonce}.
+setNonce(Nonce,CipherState) ->
+  CipherState#cipherState{n = Nonce}.
 
-encryptWithAd(Ad,PlainText,State) ->
-  K = State#state.k,
+encryptWithAd(Ad,PlainText,CipherState) ->
+  K = CipherState#cipherState.k,
   if
     K==empty -> 
-      {PlainText,State};
+      {PlainText,CipherState};
     true -> 
-      N = State#state.n,
-      {'ENCRYPT'(K,N,Ad,PlainText,State),State#state{n=N+1}}
+      N = CipherState#cipherState.n,
+      {'ENCRYPT'(K,N,Ad,PlainText),CipherState#cipherState{n=N+1}}
   end.
 
-decryptWithAd(Ad,CipherText,State) ->
-  K = State#state.k,
+decryptWithAd(Ad,CipherText,CipherState) ->
+  K = CipherState#cipherState.k,
   if
     K==empty -> 
-      {CipherText,State};
+      {CipherText,CipherState};
     true -> 
-      N = State#state.n,
-      {'DECRYPT'(K,N,Ad,CipherText,State),State#state{n=N+1}}
+      N = CipherState#cipherState.n,
+      {'DECRYPT'(K,N,Ad,CipherText),CipherState#cipherState{n=N+1}}
   end.
 
 % ----------------------------------------------------------------------
 
 %% SymmetricState functions
 
-initializeSymmetric(ProtocolName,State) ->
+return_and_modify_cipherState(F,SymmetricState) ->
+  {Term,CS} = F(SymmetricState#symmetricState.cipherState),
+  {Term,SymmetricState#symmetricState{cipherState=CS}}.
+
+initializeSymmetric(ProtocolName) ->
   Hash = 
-    if
-      byte_size(ProtocolName) =< State#state.hash_len ->
-        'PAD_TO_USING'(ProtocolName,State#state.hash_len,0);
-      true ->
-        'HASH'(ProtocolName,State)
-    end,
-  initializeKey
-    (empty,
-     State#state
-     {
-       h = Hash,
-       ck = Hash
-     }).
+    'IF'('LEQ'(byte_size(ProtocolName),'HASHLEN'()),
+         'PAD_TO_USING'(ProtocolName,'HASHLEN'(),0),
+         'HASH'(ProtocolName)),
+  #symmetricState
+    {
+     h = Hash,
+     ck = Hash,
+     cipherState = initializeKey(empty)
+    }.
 
-mixKey(InputKeyMaterial,State) ->
-  {CK,TempK} = 'HKDF'(State#state.ck,InputKeyMaterial,2,State),
-  NewState = State#state{ck=CK},
+mixKey(InputKeyMaterial,SymmetricState) ->
+  {CK,TempK} = 'HKDF'(SymmetricState#symmetricState.ck,InputKeyMaterial,2),
+  NewSymmetricState = SymmetricState#symmetricState{ck=CK},
   NewTempK =
-    if
-      State#state.hash_len==64 ->
-        'TRUNCATE'(TempK,32);
-      true ->
-        TempK
-    end,
-  initializeKey(NewTempK,NewState).
+    'IF'('EQ'('HASHLEN',64),
+        'TRUNCATE'(TempK,32),
+         TempK),
+  NewSymmetricState#symmetricState{cipherState=initializeKey(NewTempK)}.
 
-mixHash(Data,State) ->
-  HashValue = 'HASH'('MERGE'(State#state.h,Data),State),
-  State#state{h = HashValue}.
+mixHash(Data,SymmetricState) ->
+  HashValue = 'HASH'('MERGE'(SymmetricState#symmetricState.h,Data)),
+  SymmetricState#symmetricState{h = HashValue}.
 
-mixKeyAndHash(InputKeyMaterial,State) ->
+mixKeyAndHash(InputKeyMaterial,SymmetricState) ->
   ok.
 
-getHandshakeHash(State) ->
+getHandshakeHash(SymmetricState) ->
   h.
 
-encryptAndHash(Text,State) ->
-  {CipherText,State1} = encryptWithAd(State#state.h,Text,State),
-  StateH = mixHash(CipherText,State1),
-  {CipherText,StateH}.
+encryptAndHash(Text,SymmetricState) ->
+  {CipherText,SymmetricState1} = 
+    return_and_modify_cipherState
+      (fun (CS) -> encryptWithAd(SymmetricState#symmetricState.h,Text,CS) end,
+      SymmetricState),
+  SymmetricStateH = mixHash(CipherText,SymmetricState1),
+  {CipherText,SymmetricStateH}.
 
-decryptAndHash(Text,State) ->
-  {CipherText,State1} = encryptWithAd(State#state.h,Text,State),
-  StateH = mixHash(CipherText,State1),
-  {CipherText,StateH}.
+decryptAndHash(Text,SymmetricState) ->
+  {CipherText,SymmetricState1} = 
+    return_and_modify_cipherState
+      (fun (CS) -> encryptWithAd(SymmetricState#symmetricState.h,Text,CS) end,
+       SymmetricState),
+  SymmetricStateH = mixHash(CipherText,SymmetricState1),
+  {CipherText,SymmetricStateH}.
 
 split() ->
   hs.
@@ -190,155 +230,146 @@ split() ->
 
 %% HandshakeState functions
 
-initialize(ProtocolName,HandshakePattern,Initiator,Prologue,S,E,RS,RE,State) ->
-  State1 =
-    initializeSymmetric
-      (ProtocolName,
-       State#state
-       {
-         initiator=Initiator,
-         message_patterns = messagePatterns(HandshakePattern)
-       }),
+modify_symmetricState(F,HandshakeState) ->
+  SS = F(HandshakeState#handshakeState.symmetricState),
+  HandshakeState#handshakeState{symmetricState=SS}.
 
-  State2 = assign_if_defined(s,S,State1),
-  State3 = assign_if_defined(e,E,State2),
-  State4 = assign_if_defined(rs,RS,State3),
-  State5 = assign_if_defined(re,RE,State4),
+return_and_modify_symmetricState(F,HandshakeState) ->
+  {Term,SS} = F(HandshakeState#handshakeState.symmetricState),
+  {Term,HandshakeState#handshakeState{symmetricState=SS}}.
 
-  State6 = mixHash(Prologue,State5),
+initialize(ProtocolName,HandshakePattern,Initiator,Prologue,S,E,RS,RE) ->
+  HandshakeState =
+    #handshakeState
+    {
+      initiator=Initiator,
+      message_patterns = messagePatterns(HandshakePattern),
+      symmetricState = initializeSymmetric(ProtocolName)
+    },
+
+  HandshakeState2 = HandshakeState#handshakeState{s=S},
+  HandshakeState3 = HandshakeState2#handshakeState{e=E},
+  HandshakeState4 = HandshakeState3#handshakeState{rs=RS},
+  HandshakeState5 = HandshakeState4#handshakeState{re=RE},
+
+  HandshakeState6 = 
+    modify_symmetricState
+      (fun (SS) -> mixHash(Prologue,SS) end,
+       HandshakeState5),
 
   PublicKeys = 
     extractPublicKeysFromPreMessages(Initiator, HandshakePattern),
 
-  State7 = 
+  HandshakeState7 = 
     lists:foldl
-      (fun (PublicKey,S) ->
-           add_key(PublicKey,{public_key,PublicKey},S) 
+      (fun (Key,AccHandshakeState) ->
+           if
+             Key==s -> AccHandshakeState#handshakeState{s='LOCAL_STATIC'()};
+             Key==e -> AccHandshakeState#handshakeState{e='LOCAL_EPHEMERAL'()};
+             Key==rs -> AccHandshakeState#handshakeState{rs='REMOTE_STATIC'()};
+             Key==re -> AccHandshakeState#handshakeState{rs='REMOTE_EPHEMERAL'()}
+           end
        end,
-       State6,PublicKeys),
-  lists:foldl
-    (fun (PublicKey,S) -> 
-         mixHash('PUBLIC-KEY'(PublicKey,S),S) 
-     end, 
-     State7, PublicKeys).
+       HandshakeState6,PublicKeys),
 
-writeMessages([],[],State) ->
-  State;
-writeMessages(Payloads,[Message|Rest],State) ->
-  StateP =
+  lists:foldl
+    (fun (PublicKey,AccHandshakeState) -> 
+         modify_symmetricState
+           (fun (SS) -> mixHash('PUBLIC-KEY'(PublicKey),SS) end,
+            AccHandshakeState) 
+     end, 
+     HandshakeState7, PublicKeys).
+
+writeMessages([],[],HandshakeState) ->
+  HandshakeState;
+writeMessages(Payloads,[Message|Rest],HandshakeState) ->
+  HandshakeStateP =
     case Message of
       e ->
-        {Key,State0} = generateKeyPair(State),
-        State1 = set_key(e,Key,State0),
-        PubE = 'PUBLIC-KEY'(e,State1),
-        State2 = message_append(PubE,State1),
-        mixHash(PubE,State2);
+        {Key,HandshakeState0} = generateEmpheralKeyPair(HandshakeState),
+        HandshakeState1 = HandshakeState0#handshakeState{e=Key},
+        PubE = 'PUBLIC-KEY'(HandshakeState1#handshakeState.e),
+        HandshakeState2 = message_append(PubE,HandshakeState1),
+        modify_symmetricState(fun (SS) -> mixHash(PubE,SS) end, HandshakeState2);
       s ->
-        {Term,State1} = encryptAndHash('PUBLIC-KEY'(s,State),State),
-        message_append(Term,State1);
+        {Term,HandshakeState1} = 
+          return_and_modify_symmetricState
+            (fun (SS) -> encryptAndHash('PUBLIC-KEY'(HandshakeState#handshakeState.s),SS) end,
+             HandshakeState),
+        message_append(Term,HandshakeState1);
       ee ->
-        Term = 'DH'(e,re,State),
-        mixKey(Term,State);
+        Term = 'DH'(HandshakeState#handshakeState.e,HandshakeState#handshakeState.re),
+        modify_symmetricState(fun (SS) -> mixKey(Term,SS) end, HandshakeState);
       es ->
         Term = 
           if
-            State#state.initiator ->
-              'DH'(e,rs,State);
+            HandshakeState#handshakeState.initiator ->
+              'DH'(HandshakeState#handshakeState.e,HandshakeState#handshakeState.rs);
             true ->
-              'DH'(s,re,State)
+              'DH'(HandshakeState#handshakeState.s,HandshakeState#handshakeState.re)
           end,
-        mixKey(Term,State);
+        modify_symmetricState(fun (SS) -> mixKey(Term,SS) end, HandshakeState);
       se ->
         Term = 
           if
-            State#state.initiator ->
-              'DH'(s,re,State);
+            HandshakeState#handshakeState.initiator ->
+              'DH'(HandshakeState#handshakeState.s,HandshakeState#handshakeState.re);
             true ->
-              'DH'(e,rs,State)
+              'DH'(HandshakeState#handshakeState.e,HandshakeState#handshakeState.rs)
           end,
-        mixKey(Term,State);
+        modify_symmetricState(fun (SS) -> mixKey(Term,SS) end, HandshakeState);
       ss ->
-        Term = 'DH'(s,rs,State),
-        mixKey(Term,State)
+        Term = 'DH'(HandshakeState#handshakeState.s,HandshakeState#handshakeState.rs),
+        modify_symmetricState(fun (SS) -> mixKey(Term,SS) end, HandshakeState)
     end,
   {Payload,Payloads1} =
     case Payloads of
       [] -> {<<>>,[]};
       [First|Rest] -> {First,Rest}
     end,
-  {EncryptedTerm,StateEAH} = encryptAndHash(Payload,StateP),
-  writeMessages(Payloads1,Rest,message_append(EncryptedTerm,StateEAH)).
+  {EncryptedTerm,HandshakeStateEAH} = 
+    return_and_modify_symmetricState
+    (fun (SS) -> encryptAndHash(Payload,SS) end, HandshakeStateP),
+  writeMessages(Payloads1,Rest,message_append(EncryptedTerm,HandshakeStateEAH)).
 
-readMessages(Payloads,Messages,State) ->
-  State.
+readMessages(Payloads,Messages,HandshakeState) ->
+  HandshakeState.
 
+message_append(Msg,HandshakeState) ->
+  HandshakeState#handshakeState
+    {message_buffer=HandshakeState#handshakeState.message_buffer++[Msg]}.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-assign_if_defined(Key,Value,State) ->
-  if
-    Value =/= undefined ->
-      add_key(Key,{key_pair,Key},State);
-    true ->
-      State
-  end.
-
 execute_message_pattern(Payloads,State) ->
-  case State#state.message_patterns of
-    [] ->
-      State;
-    [MessagePattern|Rest] ->
-      State1 = State#state{message_patterns=Rest},
-      Initiator = State#state.initiator,
-      Messages = 
-        case MessagePattern of
-          {snd,Msgs} -> Msgs;
-          {rcv,Msgs} -> Msgs
-        end,
-      IsSend =
-        case MessagePattern of
-          {snd,_} -> true;
-          _ -> false
-        end,
-      if
-        (IsSend and Initiator) or (not(IsSend) and not(Initiator)) ->
-          writeMessages(Payloads,Messages,State1);
-        true ->
-          readMessages(Payloads,Messages,State1)
-      end
-  end.
-
-get_key(KeyName,State) ->
-  if
-    KeyName==s ->   
-      State#state.s;
-    KeyName==e ->
-      State#state.e;
-    KeyName==rs ->
-      State#state.rs;
-    KeyName==re ->
-      State#state.re
-  end.
-    
-set_key(KeyName,Value,State) ->
-  if
-    KeyName==s ->   
-      State#state{s=Value};
-    KeyName==e ->
-      State#state{e=Value};
-    KeyName==rs ->
-      State#state{rs=Value};
-    KeyName==re ->
-      State#state{re=Value}
-  end.
+  HS = State#state.handshakeState,
+  HSFinal =
+    case HS#handshakeState.message_patterns of
+      [] ->
+        State;
+      [MessagePattern|Rest] ->
+        HS1 = HS#handshakeState{message_patterns=Rest},
+        Initiator = HS1#handshakeState.initiator,
+        Messages = 
+          case MessagePattern of
+            {snd,Msgs} -> Msgs;
+            {rcv,Msgs} -> Msgs
+          end,
+        IsSend =
+          case MessagePattern of
+            {snd,_} -> true;
+            _ -> false
+          end,
+        if
+          (IsSend and Initiator) or (not(IsSend) and not(Initiator)) ->
+            writeMessages(Payloads,Messages,HS1);
+          true ->
+            readMessages(Payloads,Messages,HS1)
+        end
+    end,
+  State#state{handshakeState=HSFinal}.
 
 % ----------------------------------------------------------------------
-
-message_append(Msg,State) ->
-  State#state{message_buffer=State#state.message_buffer++[Msg]}.
-
-add_key(KeyName,Key,State) ->
-  set_key(KeyName,Key,State).
 
 extractPublicKeysFromPreMessages(Initiator,HandshakePattern) ->  
   {PreMessages, _} = HandshakePattern,
@@ -351,7 +382,7 @@ extractPublicKeys(Initiator,PreMessages,Role) ->
     (fun (PreMessage,Acc) ->
          case PreMessage of
            {Role,Keys} -> 
-             lists:map(fun (Key) -> key_type(Key,Role,Initiator) end,Keys)
+             lists:map(fun (Key) -> key_type(Key,Role,Initiator) end, Keys)
                ++Acc;
            _ ->
              Acc
@@ -377,18 +408,19 @@ messagePatterns({_,Patterns}) ->
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-generateKeyPair(State) ->
-  Counter = State#state.counter,
+generateEmpheralKeyPair(HandshakeState) ->
+  Counter = HandshakeState#handshakeState.counter,
   {
-    {ephemeral_key_pair, {Counter,State#state.initiator}}, 
-    State#state{counter=Counter+1}
+    'GENERATE_KEYPAIR'(Counter),
+    HandshakeState#handshakeState{counter=Counter+1}
   }.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 init(ProtoSpec,Initiator,Prologue, S, E, RS, RE) ->
   {ProtocolName, HandshakePattern, InitState} = parseProtocolSpec(ProtoSpec),
-  initialize(ProtocolName, HandshakePattern, Initiator, Prologue, S, E, RS, RE, InitState).
+  InitState#state
+    {handshakeState=initialize(ProtocolName, HandshakePattern, Initiator, Prologue, S, E, RS, RE)}.
 
 parseProtocolSpec({PatternName,DHSpec,CipherSpec,HashSpec}) ->
   ProtocolName = PatternName++"_"++DHSpec++"_"++CipherSpec++"_"++HashSpec,
@@ -429,7 +461,9 @@ test() ->
       s, undefined, undefined, undefined
      ),
   State = execute_message_pattern([],State0),
-  io:format("~p~n",[State#state.message_buffer]).
+  io:format
+    ("~p~n",
+     [(State#state.handshakeState)#handshakeState.message_buffer]).
 
 
 
