@@ -120,6 +120,15 @@
 'INPUT_BUFFER'(N) ->
   {?FUNCTION_NAME,[N]}.
 
+'READ'(N,Loc) ->
+  {?FUNCTION_NAME,[N,Loc]}.
+  
+'SKIP'(N,Loc) ->
+  {?FUNCTION_NAME,[N,Loc]}.
+
+'SIZE'(Loc) ->
+  {?FUNCTION_NAME,[Loc]}.
+
 % ----------------------------------------------------------------------
 
 'IF'(Condition,Expr1,Expr2) ->
@@ -212,24 +221,36 @@ mixKeyAndHash(InputKeyMaterial,SymmetricState) ->
 getHandshakeHash(SymmetricState) ->
   h.
 
-encryptAndHash(Text,SymmetricState) ->
+encryptAndHash(PlainText,SymmetricState) ->
   {CipherText,SymmetricState1} = 
     return_and_modify_cipherState
-      (fun (CS) -> encryptWithAd(SymmetricState#symmetricState.h,Text,CS) end,
+      (fun (CS) -> encryptWithAd(SymmetricState#symmetricState.h,PlainText,CS) end,
       SymmetricState),
   SymmetricStateH = mixHash(CipherText,SymmetricState1),
   {CipherText,SymmetricStateH}.
 
-decryptAndHash(Text,SymmetricState) ->
-  {CipherText,SymmetricState1} = 
+decryptAndHash(CipherText,SymmetricState) ->
+  {PlainText,SymmetricState1} = 
     return_and_modify_cipherState
-      (fun (CS) -> encryptWithAd(SymmetricState#symmetricState.h,Text,CS) end,
+      (fun (CS) -> decryptWithAd(SymmetricState#symmetricState.h,CipherText,CS) end,
        SymmetricState),
   SymmetricStateH = mixHash(CipherText,SymmetricState1),
-  {CipherText,SymmetricStateH}.
+  {PlainText,SymmetricStateH}.
 
-split() ->
-  hs.
+split(SymmetricState) ->
+  {Temp_K1, Temp_K2} = 'HKDF'(SymmetricState#symmetricState.ck, <<>>, 2),
+  NewTemp_K1 = 
+    'IF'('EQ'('HASHLEN',64),
+        'TRUNCATE'(Temp_K1,32),
+         Temp_K1),
+  NewTemp_K2 = 
+    'IF'('EQ'('HASHLEN',64),
+        'TRUNCATE'(Temp_K2,32),
+         Temp_K2),
+  {
+    initializeKey(NewTemp_K1), 
+    initializeKey(NewTemp_K2)
+  }.
 
 % ----------------------------------------------------------------------
 
@@ -284,44 +305,45 @@ initialize(ProtocolName,Handshake,Initiator,Prologue,S,E,RS,RE) ->
      end, 
      HandshakeState7, PublicKeys).
 
-writeMessage(Message,HandshakeState) ->
+writeMessage(Message,HS) ->
+  IsInitiator = HS#handshakeState.initiator,
   case Message of
     e ->
-      {Key,HandshakeState0} = generateEmpheralKeyPair(HandshakeState),
-      HandshakeState1 = HandshakeState0#handshakeState{e=Key},
-      PubE = 'PUBLIC-KEY'(HandshakeState1#handshakeState.e),
-      HandshakeState2 = message_append(PubE,HandshakeState1),
-      modify_symmetricState(fun (SS) -> mixHash(PubE,SS) end, HandshakeState2);
+      {Key,HS0} = generateEmpheralKeyPair(HS),
+      HS1 = HS0#handshakeState{e=Key},
+      PubE = 'PUBLIC-KEY'(HS1#handshakeState.e),
+      HS2 = message_append(PubE,HS1),
+      modify_symmetricState(fun (SS) -> mixHash(PubE,SS) end, HS2);
     s ->
-      {Term,HandshakeState1} = 
+      {Term,HS1} = 
         return_and_modify_symmetricState
-          (fun (SS) -> encryptAndHash('PUBLIC-KEY'(HandshakeState#handshakeState.s),SS) end,
-           HandshakeState),
-      message_append(Term,HandshakeState1);
+          (fun (SS) -> encryptAndHash('PUBLIC-KEY'(HS#handshakeState.s),SS) end,
+           HS),
+      message_append(Term,HS1);
     ee ->
-      Term = 'DH'(HandshakeState#handshakeState.e,HandshakeState#handshakeState.re),
-      modify_symmetricState(fun (SS) -> mixKey(Term,SS) end, HandshakeState);
+      Term = 'DH'(HS#handshakeState.e,HS#handshakeState.re),
+      modify_symmetricState(fun (SS) -> mixKey(Term,SS) end, HS);
     es ->
       Term = 
         if
-          HandshakeState#handshakeState.initiator ->
-            'DH'(HandshakeState#handshakeState.e,HandshakeState#handshakeState.rs);
+          IsInitiator ->
+            'DH'(HS#handshakeState.e,HS#handshakeState.rs);
           true ->
-            'DH'(HandshakeState#handshakeState.s,HandshakeState#handshakeState.re)
+            'DH'(HS#handshakeState.s,HS#handshakeState.re)
         end,
-      modify_symmetricState(fun (SS) -> mixKey(Term,SS) end, HandshakeState);
+      modify_symmetricState(fun (SS) -> mixKey(Term,SS) end, HS);
     se ->
       Term = 
         if
-          HandshakeState#handshakeState.initiator ->
-            'DH'(HandshakeState#handshakeState.s,HandshakeState#handshakeState.re);
+          IsInitiator ->
+            'DH'(HS#handshakeState.s,HS#handshakeState.re);
           true ->
-            'DH'(HandshakeState#handshakeState.e,HandshakeState#handshakeState.rs)
+            'DH'(HS#handshakeState.e,HS#handshakeState.rs)
         end,
-      modify_symmetricState(fun (SS) -> mixKey(Term,SS) end, HandshakeState);
+      modify_symmetricState(fun (SS) -> mixKey(Term,SS) end, HS);
     ss ->
-      Term = 'DH'(HandshakeState#handshakeState.s,HandshakeState#handshakeState.rs),
-      modify_symmetricState(fun (SS) -> mixKey(Term,SS) end, HandshakeState)
+      Term = 'DH'(HS#handshakeState.s,HS#handshakeState.rs),
+      modify_symmetricState(fun (SS) -> mixKey(Term,SS) end, HS)
   end.
 
 writeMessages([],Payload,HandshakeState) ->
@@ -337,12 +359,69 @@ message_append(Msg,HandshakeState) ->
   HandshakeState#handshakeState
     {output_buffer=HandshakeState#handshakeState.output_buffer++[Msg]}.
 
-readMessage(Message,HandshakeState) ->
-  HandshakeState.
+readMessage(Message,HS) ->
+  IsInitiator = HS#handshakeState.initiator,
+  case Message of
+    e ->
+      if
+        HS#handshakeState.re == undefined ->
+          HS0 = HS#handshakeState
+            {
+              re = 'READ'('DHLEN'(),HS#handshakeState.input_buffer),
+              input_buffer = 'SKIP'('DHLEN'(),HS#handshakeState.input_buffer)
+            },
+          modify_symmetricState
+            (fun (SS) -> mixHash('PUBLIC-KEY'(HS0#handshakeState.re),SS) end, 
+             HS0)
+      end;
+    s ->
+      CS = (HS#handshakeState.symmetricState)#symmetricState.cipherState,
+      NumBytes = 'IF'(hasKey(CS),'DHLEN'()+16,'DHLEN'),
+      Temp = 'READ'(NumBytes,HS#handshakeState.input_buffer),
+      if
+        HS#handshakeState.rs == undefined ->
+          {DecryptedTerm,HS0} = 
+            return_and_modify_symmetricState
+              (fun (SS) -> decryptAndHash(Temp,SS) end, HS),
+          HS0#handshakeState
+            {
+            rs=DecryptedTerm,
+            input_buffer='SKIP'('DHLEN'(),HS#handshakeState.input_buffer)
+           }
+      end;
+    ee ->
+      Term = 'DH'(HS#handshakeState.e,HS#handshakeState.re),
+      modify_symmetricState(fun (SS) -> mixKey(Term,SS) end, HS);
+    es ->
+      Term =
+        if
+          IsInitiator ->
+            'DH'(HS#handshakeState.e,HS#handshakeState.rs);
+          true ->
+            'DH'(HS#handshakeState.s,HS#handshakeState.re)
+        end,
+      modify_symmetricState(fun (SS) -> mixKey(Term,SS) end, HS);
+    se ->
+      Term =
+        if
+          IsInitiator ->
+            'DH'(HS#handshakeState.s,HS#handshakeState.re);
+          true ->
+            'DH'(HS#handshakeState.e,HS#handshakeState.rs)
+        end,
+      modify_symmetricState(fun (SS) -> mixKey(Term,SS) end, HS);
+    ss ->
+      Term = 'DH'(HS#handshakeState.s,HS#handshakeState.rs),
+      modify_symmetricState(fun (SS) -> mixKey(Term,SS) end, HS)
+  end.
 
-readMessages([],HandshakeState) ->
-  %% Get payload
-  HandshakeState;
+readMessages([],HS) ->
+  InputBuffer = HS#handshakeState.input_buffer,
+  PayloadToDecrypt = 'READ'('SIZE'(InputBuffer),InputBuffer),
+  {DecryptedTerm,HS0} = 
+    return_and_modify_symmetricState
+      (fun (SS) -> decryptAndHash(PayloadToDecrypt,SS) end, HS),
+  HS0#handshakeState{payload_buffer=DecryptedTerm};
 readMessages([Message|Messages],HandshakeState) ->
   HS = readMessage(Message,HandshakeState),
   readMessages(Messages,HS).
@@ -389,7 +468,7 @@ execute_message_pattern(MessagePattern,Payload,State) ->
     IsWriter -> 
       HS1 = writeMessages(Messages,Payload,HS),
       {
-        HS1#handshakeState.output_buffer, 
+        {wrote,HS1#handshakeState.output_buffer}, 
         State#state{handshakeState = HS1#handshakeState{output_buffer=[]}}
       };
     true -> 
@@ -397,7 +476,7 @@ execute_message_pattern(MessagePattern,Payload,State) ->
       HS1 = HS#handshakeState{input_buffer = 'INPUT_BUFFER'(ReadCounter)},
       HS2 = readMessages(Messages,HS1),
       {
-        HS2#handshakeState.payload_buffer,
+        {read,HS2#handshakeState.payload_buffer},
         State#state{handshakeState = HS2#handshakeState{input_buffer=undefined,payload_buffer=[]}}
       }
   end.
@@ -497,7 +576,7 @@ test() ->
          io:format("~p~n~n",[Result])
      end, Results),
   io:format
-    ("~nFinal state: ~p~n",
+    ("~nFinal state:~n~p~n",
      [State]).
 
 
