@@ -346,7 +346,12 @@ writeMessage(Message,HS) ->
       modify_symmetricState(fun (SS) -> mixKey(Term,SS) end, HS)
   end.
 
-writeMessages([],Payload,HandshakeState) ->
+writeMessages([],PrePayload,HandshakeState) ->
+  Payload = 
+    if
+      PrePayload == [] -> <<>>;
+      true -> PrePayload
+    end,
   {EncryptedTerm,HandshakeStateEAH} = 
     return_and_modify_symmetricState
       (fun (SS) -> encryptAndHash(Payload,SS) end, HandshakeState),
