@@ -154,6 +154,12 @@ analyze_trace_file(FileName) ->
             [graphviz_traceback("trace1.dot",Traceback,1,PredefinedBinaries)]),
   io:format("Traceback:~n~p~n",
             [graphviz_traceback("trace2.dot",Traceback,2,PredefinedBinaries)]),
+
+  Sends = sends(DetTrace),
+  [_Port,FirstSend] = lists:nth(1,Sends),
+  io:format
+    ("~n~nThe first send is~n~p~n",
+     [FirstSend]),
   ok.
 
 get_key(KeyFileName,KeyDir,Type) ->
@@ -453,11 +459,28 @@ call_limits(Pid,I,A) ->
   
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
+%% signal_extract:analyze_trace_file("enoise.trace").
+
+sends(Trace) ->
+  collect_at_calls
+    (fun (_Time,Event) -> 
+         case Event of
+           {trace_ts,_,call,{enoise,gen_tcp_snd_msg,_},_} -> true;
+           _ -> false
+         end
+     end, 
+     Trace,
+     fun (Call,Time,_,_) ->
+         {ExpandedCall={_M,_F,Args},NewBinaries} = expand_term(Call,[]),
+         Args
+     end).
+
 traceback_calls(EventRecognizer,Predefs,A) ->
   collect_at_calls
     (EventRecognizer,A,
      fun (Call,Time,_,_) -> 
-         {ExpandedCall,NewBinaries} = expand_term(Call,[]),
+         {ExpandedCall={_M,_F,Args},NewBinaries} = expand_term(Call,[]),
+         io:format("~nResult:~n~p~n~n",[Args]),
          {{ExpandedCall,Call,Time},trace_back_binaries(NewBinaries,Predefs,[])}
      end).
 
@@ -467,15 +490,14 @@ collect_at_calls(_EventRecognizer,I,Size,_A,_F) when I>=Size ->
   [];
 collect_at_calls(EventRecognizer,I,Size,A,F) ->
   Event = array:get(I,A),
-  Info = 
-    case EventRecognizer(I,Event) of
-      true ->
-        {trace_ts,_,call,Call,_} = Event,
-        [F(Call,I,Size,A)];
-      false ->
-        []
-    end,
-  Info ++ collect_at_calls(EventRecognizer,I+1,Size,A,F).
+  Results = collect_at_calls(EventRecognizer,I+1,Size,A,F),
+  case EventRecognizer(I,Event) of
+    true ->
+      {trace_ts,_,call,Call,_} = Event,
+      [F(Call,I,Size,A) | Results];
+    false ->
+      Results
+  end.
   
 trace_back_binaries([],_Predefs,_Seen) ->
   [];
@@ -575,6 +597,11 @@ expand_term(T,Binaries) ->
           case binary_type(Register) of
             rewrite ->
               expand_term(item(source(Register)),Binaries);
+            produced ->
+              case item(source(Register)) of
+                {trace_ts, _, call, Call, _} ->
+                  expand_term(Call,Binaries)
+              end;
             _ ->
               {name(Register),[T|Binaries]}
           end
