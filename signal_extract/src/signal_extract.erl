@@ -6,6 +6,8 @@
 
 -compile(export_all).
 
+-export([print_call/1,print_full_call/1]).
+
 
 %% rebar3 as test shell
 
@@ -160,7 +162,7 @@ analyze_trace_file(FileName) ->
   io:format
     ("~n~nThe first send is~n~p~n",
      [FirstSend]),
-  ok.
+  FirstSend.
 
 get_key(KeyFileName,KeyDir,Type) ->
   FilePath = KeyDir++"/"++KeyFileName++if Type==priv -> ""; Type==pub -> ".pub" end,
@@ -912,6 +914,7 @@ rewriteTo(Binary,Binaries) ->
      Binaries,
      [
       fun merge/2,
+      truncate(),
       extract(),
       pad_with(16#5c),
       pad_with(16#36),
@@ -957,6 +960,8 @@ le_type_ord(xor_with_pad) ->
   5;
 le_type_ord(pad) ->
   10;
+le_type_ord(truncate) ->
+  12;
 le_type_ord(extract) ->
   15.
 
@@ -1049,6 +1054,18 @@ merge(OrigBinary,Binary,[{First,_Register}|Rest],Binaries,Match) ->
     false -> 
       merge(OrigBinary,Binary,Rest,Binaries,Match)
   end.
+
+truncate() ->
+  unary_rewrite
+    (fun (Binary,Candidate) ->
+         BinarySize = byte_size(Binary),
+         case binary:longest_common_prefix([Binary,Candidate]) of
+           BinarySize ->
+             {signal_binary_ops,truncate,[Candidate,BinarySize]};
+           _ ->
+             false
+         end
+     end).
 
 extract() ->
   unary_rewrite

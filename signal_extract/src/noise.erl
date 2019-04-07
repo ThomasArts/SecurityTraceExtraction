@@ -1,6 +1,8 @@
 -module(noise).
 
 -export([test/0]).
+-export(['MERGE'/2]).
+-export([subst/2]).
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -73,8 +75,16 @@
 'BLOCKLEN'() ->
   {?FUNCTION_NAME,[]}.
 
+'XOR'(B1,B2) ->
+  {?FUNCTION_NAME,[B1,B2]}.
+
 'HMAC-HASH'(Key,Text) ->
-  {?FUNCTION_NAME,[Key,Text]}.
+  Key1 = 'PAD_TO_USING'(Key,'BLOCKLEN'(),0),
+  OPad = 'PAD_TO_USING'(<<>>,'BLOCKLEN'(),16#5c),
+  IPad = 'PAD_TO_USING'(<<>>,'BLOCKLEN'(),16#36),
+  Hash1 = 'HASH'('MERGE'('XOR'(Key1,IPad),Text)),
+  Hash2 = 'HASH'('MERGE'('XOR'(Key1,OPad),Hash1)),
+  Hash2.
 
 'HKDF'(ChainingKey,InputKeyMaterial,NumOutputs) ->
   TempKey = 'HMAC-HASH'(ChainingKey,InputKeyMaterial),
@@ -140,8 +150,8 @@
 'MERGE'(Term1,Term2) ->
   {?FUNCTION_NAME,[Term1,Term2]}.
 
-'PAD_TO_USING'(Term,Len,Pad) ->
-  {?FUNCTION_NAME,[Term,Len,Pad]}.
+'PAD_TO_USING'(Term,ResultingLen,Pad) ->
+  {?FUNCTION_NAME,[Term,ResultingLen,Pad]}.
 
 'TRUNCATE'(Text,Size) ->
   {?FUNCTION_NAME,[Text,Size]}.
@@ -620,7 +630,6 @@ subst({Atom,List},Substs) when is_atom(Atom), is_list(List) ->
     Term -> 
       Term;
     OtherTerm -> 
-      io:format("subst(~p) => ~p~n",[Term,OtherTerm]),
       subst(OtherTerm,Substs);
     _ -> 
       Term
@@ -697,7 +706,10 @@ test() ->
     subst(FirstResult,make_subst_list(Parms)),
   io:format
     ("~n~nSubstituted results is~n~p~n",
-     [SubstResult]).
+     [SubstResult]),
+  SubstResult.
+  
+             
 
   
   
