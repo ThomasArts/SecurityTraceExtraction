@@ -2,8 +2,14 @@
 
 -export([test/0]).
 -export(['MERGE'/2]).
--export([subst/2]).
 
+%%-define(debug,true).
+-ifdef(debug).
+-define(LOG(X,Y),
+	io:format("~p(~p): ~s",[?MODULE,self(),io_lib:format(X,Y)])).
+-else.
+-define(LOG(X,Y),true).
+-endif.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
@@ -37,6 +43,7 @@
 -record(state,
         {
           counter=0,  %% numbering read operations
+          payload_counter=0, %% numbering payload
           handshakeState = #handshakeState{}
         }).
 
@@ -223,10 +230,10 @@ mixHash(Data,SymmetricState) ->
   SymmetricState#symmetricState{h = HashValue}.
 
 mixKeyAndHash(InputKeyMaterial,SymmetricState) ->
-  ok.
+  error(nyi).
 
 getHandshakeHash(SymmetricState) ->
-  h.
+  error(nyi).
 
 encryptAndHash(PlainText,SymmetricState) ->
   {CipherText,SymmetricState1} = 
@@ -353,12 +360,7 @@ writeMessage(Message,HS) ->
       modify_symmetricState(fun (SS) -> mixKey(Term,SS) end, HS)
   end.
 
-writeMessages([],PrePayload,HandshakeState) ->
-  Payload = 
-    if
-      PrePayload == [] -> <<>>;
-      true -> PrePayload
-    end,
+writeMessages([],Payload,HandshakeState) ->
   {EncryptedTerm,HandshakeStateEAH} = 
     return_and_modify_symmetricState
       (fun (SS) -> encryptAndHash(Payload,SS) end, HandshakeState),
@@ -440,30 +442,23 @@ readMessages([Message|Messages],HandshakeState) ->
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-execute_handshake(ProtocolName,Initiator,Prologue,{S,E,RS,RE},Handshake,Payloads) ->
+execute_handshake(ProtocolName,Initiator,Prologue,{S,E,RS,RE},Handshake) ->
   State = #state{handshakeState=initialize(ProtocolName,Handshake,Initiator,Prologue,S,E,RS,RE)},
   {_PreHandshake,CommHandshake} = split_handshake(Handshake),
-  execute_handshake(CommHandshake,Payloads,State).
+  execute_handshake(CommHandshake,State).
 
-execute_handshake([],_Payloads,State) ->
+execute_handshake([],State) ->
   HS = State#state.handshakeState,
   SS = HS#handshakeState.symmetricState,
   {[], split(SS), State};
-execute_handshake([MessagePattern|RestMessagePatterns],Payloads,State) ->
-  {Payload,RestPayloads} = 
-    case Payloads of
-      [FPayload|RPayloads] ->
-        {FPayload,RPayloads};
-      [] ->
-        {[],[]}
-    end,
+execute_handshake([MessagePattern|RestMessagePatterns],State) ->
   {Result,NewState} = 
-    execute_message_pattern(MessagePattern,Payload,State),
+    execute_message_pattern(MessagePattern,State),
   {Results,Split,FinalState} = 
-    execute_handshake(RestMessagePatterns,RestPayloads,NewState),
+    execute_handshake(RestMessagePatterns,NewState),
   {[Result|Results],Split,FinalState}.
 
-execute_message_pattern(MessagePattern,Payload,State) ->
+execute_message_pattern(MessagePattern,State) ->
   HS = State#state.handshakeState,
   IsInitiator = HS#handshakeState.initiator,
   Messages = 
@@ -480,10 +475,14 @@ execute_message_pattern(MessagePattern,Payload,State) ->
     (IsSender and IsInitiator) or (not(IsSender) and not(IsInitiator)),
   if
     IsWriter -> 
+      PayloadCounter = State#state.payload_counter,
+      Payload = {'PAYLOAD',[PayloadCounter]},
       HS1 = writeMessages(Messages,Payload,HS),
       {
         {wrote,HS1#handshakeState.output_buffer}, 
-        State#state{handshakeState = HS1#handshakeState{output_buffer=[]}}
+        State#state
+        {handshakeState = HS1#handshakeState{output_buffer=[]},
+         payload_counter=PayloadCounter+1}
       };
     true -> 
       ReadCounter = State#state.counter,
@@ -491,7 +490,9 @@ execute_message_pattern(MessagePattern,Payload,State) ->
       HS2 = readMessages(Messages,HS1),
       {
         {read,HS2#handshakeState.payload_buffer},
-        State#state{handshakeState = HS2#handshakeState{input_buffer=undefined,payload_buffer=[]}}
+        State#state
+        {handshakeState = 
+           HS2#handshakeState{input_buffer=undefined,payload_buffer=[]}}
       }
   end.
 
@@ -544,7 +545,7 @@ generateEmpheralKeyPair(HandshakeState) ->
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 protocol_name(HandshakeName,DHType,CipherType,HashType) ->
-  list_to_binary(HandshakeName++"_"++DHType++"_"++CipherType++"_"++HashType).
+  list_to_binary("Noise_"++HandshakeName++"_"++DHType++"_"++CipherType++"_"++HashType).
 
 split_handshake(Handshake) ->
   Handshake.
@@ -680,8 +681,7 @@ test() ->
        Initiator,
        Prologue,
        {s,undefined,undefined,undefined},
-       Handshake,
-       []),
+       Handshake),
 
   io:format("~n~nResults:~n"),
   lists:foreach
@@ -708,8 +708,6 @@ test() ->
     ("~n~nSubstituted results is~n~p~n",
      [SubstResult]),
   SubstResult.
-  
-             
 
   
   

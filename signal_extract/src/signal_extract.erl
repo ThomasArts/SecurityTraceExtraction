@@ -8,6 +8,15 @@
 
 -export([print_call/1,print_full_call/1]).
 
+%%-define(debug,true).
+-ifdef(debug).
+-define(LOG(X,Y),
+	io:format("~p(~p): ~s",[?MODULE,self(),io_lib:format(X,Y)])).
+-else.
+-define(LOG(X,Y),true).
+-endif.
+
+
 
 %% rebar3 as test shell
 
@@ -66,7 +75,7 @@ test(F, Modules, TraceFileName) ->
   Computer ! start,
   receive
     {Computer, stopped, Value} -> 
-      io:format("computed value ~p~n",[Value]), 
+      ?LOG("computed value ~p~n",[Value]), 
       timer:sleep(5000),
       Tracer ! {stop, self(), TraceFileName},
       receive
@@ -91,7 +100,7 @@ tracer1(L) ->
     Tuple when is_tuple(Tuple), size(Tuple)>1, element(1,Tuple)==trace_ts ->
       tracer1([Tuple|L]);
     Other ->
-      io:format("Warning: strange message ~p~n",[Other]),
+      ?LOG("Warning: strange message ~p~n",[Other]),
       tracer1(L)
   end.
 
@@ -127,7 +136,7 @@ analyze_trace_file(FileName) ->
   DetTrace = trace_make_call_deterministic(Trace),
   
   io:format("~n~nGiving names to binaries (and finding call sites)...~n"),
-  register_binaries(DetTrace,PredefinedBinaries),
+  register_binaries(DetTrace, PredefinedBinaries),
   
   io:format("~n~nTrying to derive binaries using rewriting...~n"),
   compose_binaries(DetTrace),
@@ -151,15 +160,15 @@ analyze_trace_file(FileName) ->
        DetTrace),
   traceback_experiment(Traceback,PredefinedBinaries),
   
-  io:format("~n~n~nGenerating graphviz model:~n~n"),
-  io:format("Traceback:~n~p~n",
-            [graphviz_traceback("trace1.dot",Traceback,1,PredefinedBinaries)]),
-  io:format("Traceback:~n~p~n",
-            [graphviz_traceback("trace2.dot",Traceback,2,PredefinedBinaries)]),
+%%  io:format("~n~n~nGenerating graphviz model:~n~n"),
+%%  io:format("Traceback:~n~p~n",
+%%            [graphviz_traceback("trace1.dot",Traceback,1,PredefinedBinaries)]),
+%%  io:format("Traceback:~n~p~n",
+%%            [graphviz_traceback("trace2.dot",Traceback,2,PredefinedBinaries)]),
 
   Sends = sends(DetTrace),
   [_Port,FirstSend] = lists:nth(1,Sends),
-  io:format
+  ?LOG
     ("~n~nThe first send is~n~p~n",
      [FirstSend]),
   FirstSend.
@@ -255,10 +264,10 @@ delete_call(Call,[OtherItem|Rest]) ->
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 register_binaries(A,Pre) ->
-  register_binaries(0,array:size(A),A,Pre).
-register_binaries(I,Size,_A,_Pre) when I>=Size ->
+  register_binaries(0,array:size(A),Pre,A).
+register_binaries(I,Size,_Pre,_A) when I>=Size ->
   ok;
-register_binaries(I,Size,A,Pre) ->
+register_binaries(I,Size,Pre,A) ->
   TraceItem = array:get(I,A),
   Binaries = binaries(TraceItem),
   lists:foreach
@@ -289,7 +298,7 @@ register_binaries(I,Size,A,Pre) ->
            true -> ok
          end
      end, Binaries),
-  register_binaries(I+1,Size,A,Pre).
+  register_binaries(I+1,Size,Pre,A).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
@@ -300,7 +309,7 @@ compose_binaries(A) ->
            true ->
              Source = source(Register),
              Pid = pid(item(Source)),
-             io:format("~ntrying to compose binary~n~p~n==~p~n",[Register,Binary]),
+             ?LOG("~ntrying to compose binary~n~p~n==~p~n",[Register,Binary]),
              {StartTime,EndTime} = 
                case is_produced(Register) of
                  true -> {time(Source),time(return(Register))};
@@ -325,15 +334,22 @@ compose_binaries(A) ->
                           true
                       end
                   end, PreContextBinaries),
-             io:format
+             ?LOG
                ("number of binaries is ~p:~n~p~n~n",
                 [length(ContextBinaries),ContextBinaries]),
-             io:format
+             ?LOG
                ("Limits ~p~n",
                 [{StartTime,EndTime}]),
              case rewriteTo(Binary,ContextBinaries) of
                false ->
-                 ok;
+                 case is_consumed(Register) of
+                   true ->
+                     io:format
+                       ("~n*** Warning: the binary~n~p~nis not explainable"
+                        ++" from the context~n~p~n",
+                        [Binary,ContextBinaries]);
+                   false -> ok
+                 end;
                Sol ->
                  update_binary(Binary,{rewrite,{time(Source),Sol}})
              end;
@@ -456,7 +472,7 @@ call_of_function(Pid,I,Skip,Size,A) ->
 call_limits(Pid,I,A) ->
   CallSite = call_of_function(Pid,I-1,A), 
   ReturnSite = return_of_function(Pid,I,A),
-  io:format("call_limits(~p) = {~p,~p}~n",[I,CallSite,ReturnSite]),
+  ?LOG("call_limits(~p) = {~p,~p}~n",[I,CallSite,ReturnSite]),
   {CallSite,ReturnSite}.
   
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -482,7 +498,7 @@ traceback_calls(EventRecognizer,Predefs,A) ->
     (EventRecognizer,A,
      fun (Call,Time,_,_) -> 
          {ExpandedCall={_M,_F,Args},NewBinaries} = expand_term(Call,[]),
-         io:format("~nResult:~n~p~n~n",[Args]),
+         ?LOG("~nResult:~n~p~n~n",[Args]),
          {{ExpandedCall,Call,Time},trace_back_binaries(NewBinaries,Predefs,[])}
      end).
 
@@ -558,7 +574,7 @@ binaries_located_at(Time,Predefs) ->
                false ->
                  Name = name(Register),
                  Type = binary_type(Register),
-                 io:format("time ~p: name=~p type=~p ~n",[Time,Name,Type]),
+                 ?LOG("time ~p: name=~p type=~p ~n",[Time,Name,Type]),
                  case Type of
                    consumed ->
                      {[Name|Cons],Prod};
@@ -647,7 +663,7 @@ traceback_experiment(Traceback,_PredefinedBinaries) ->
          io:format
            ("~n~n------------------------------------------------------~n"),
          io:format
-           ("Starting with ~s:~n~n",[print_full_call(OriginatingCall)]),
+           ("Starting with ~p:~n~n",[OriginatingCall]),
          lists:foreach
            (fun ({call, Time, Call, _, Return, Consumed, Produced}) ->
                 CallString = print_full_call(Call),
@@ -916,13 +932,17 @@ rewriteTo(Binary,Binaries) ->
       fun merge/2,
       truncate(),
       extract(),
-      pad_with(16#5c),
-      pad_with(16#36),
-      pad_with(16#0),
-      pad_one(),
-      xor_with_pad(16#5c),
-      xor_with_pad(16#36)
+      pad(),
+      xor_const()
      ]).
+
+%%      pad_with(16#5c),
+%%      pad_with(16#36),
+%%      pad_with(16#0),
+%%      pad_one(),
+%%      xor_with_pad(16#5c),
+%%      xor_with_pad(16#36)
+%%     ]).
 
 rewriteTo(Binary,Binaries,Operators) ->
   Solutions = 
@@ -936,18 +956,43 @@ rewriteTo(Binary,Binaries,Operators) ->
        Operators),
   case Solutions of
     [] -> 
-      io:format
+      ?LOG
         ("No explanation found using~n~p~n",
          [Binaries]),
       false;
     [Sol] -> 
-      Sol;
+      verify_solution(Sol,Binary,Binaries);
     Sols ->
-      io:format
+      ?LOG
         ("Multiple solutions found using~n~p~nAlts=~p~n",
          [Binaries,Sols]),
       hd(lists:sort(fun le_rewrites/2,Sols))
 end.
+
+verify_solution(Sol={M,F,Args},Binary,Binaries) ->
+  case apply(M,F,Args) == Binary of
+    true ->
+      ArgBinaries = lists:filter(fun is_binary/1, Args),
+      StrippedBinaries = lists:map(fun ({B,_}) -> B end, Binaries),
+      case lists:all(fun (ArgBinary) -> 
+                         lists:member(ArgBinary,StrippedBinaries)
+                     end,
+                     ArgBinaries) of
+        true -> 
+          Sol;
+        false ->
+          io:format
+            ("~n*** Error: the solution~n  ~p~n contains binaries"
+             ++" not available in the context~n  ~p~n",
+             [Sol,Binaries]),
+          error(bad)
+      end;
+    false ->
+      io:format
+        ("~n*** Error: rewrite solution~n  ~p~nis not equal to ~p~n",
+         [Sol,Binary]),
+      error(bad)
+  end.
 
 le_rewrites(R1,R2) ->
   R1Type = element(2,R1),
@@ -956,7 +1001,7 @@ le_rewrites(R1,R2) ->
 
 le_type_ord(merge) ->
   1;
-le_type_ord(xor_with_pad) ->
+le_type_ord(xor_words_with_const) ->
   5;
 le_type_ord(pad) ->
   10;
@@ -1017,7 +1062,7 @@ occurs_check(Binary,Candidate) ->
       false;
     true ->
       CandidateRegister = get_binary(Candidate),
-      io:format("reg=~p~n",[CandidateRegister]),
+      ?LOG("reg=~p~n",[CandidateRegister]),
       case (CandidateRegister =/= undefined) 
         andalso binary_type(CandidateRegister)==rewrite of
         true ->
@@ -1033,10 +1078,9 @@ occurs_check(Binary,Candidate) ->
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %% n-merge
-
+%%
 merge(Binary,Binaries) ->
   merge(Binary,Binary,Binaries,Binaries,[]).
-
 merge(_,<<>>,_,_,Match) ->
    {signal_binary_ops,merge,lists:reverse(Match)};
 merge(_,_,[],_,_) ->
@@ -1055,6 +1099,8 @@ merge(OrigBinary,Binary,[{First,_Register}|Rest],Binaries,Match) ->
       merge(OrigBinary,Binary,Rest,Binaries,Match)
   end.
 
+%% truncate a binary
+%%
 truncate() ->
   unary_rewrite
     (fun (Binary,Candidate) ->
@@ -1067,6 +1113,8 @@ truncate() ->
          end
      end).
 
+%% extract a part of a binary
+%%
 extract() ->
   unary_rewrite
     (fun (Binary,Candidate) ->
@@ -1078,47 +1126,49 @@ extract() ->
          end
      end).
 
-pad_one() ->
+%% pad with a symbol
+%%
+pad() ->
   unary_rewrite
     (fun (Binary,Candidate) ->
          ByteSizeBinary = byte_size(Binary),
          ByteSizeCandidate = byte_size(Candidate),
+         RemainingSize = ByteSizeBinary-ByteSizeCandidate,
          if
-           ByteSizeCandidate == ByteSizeBinary-1 ->
-             PadSymbol = binary:last(Binary),
-             {signal_binary_ops,pad,[Candidate,PadSymbol,1]};
-           true ->
-             false
-         end
-     end).
-             
-pad_with(Symbol) ->
-  unary_rewrite
-    (fun (Binary,Candidate) ->
-         ByteSizeBinary = byte_size(Binary),
-         ByteSizeCandidate = byte_size(Candidate),
-         if
-           ByteSizeCandidate < ByteSizeBinary ->
-             return_if_eq
-               (Binary,
-                {signal_binary_ops,pad,
-                 [Candidate,Symbol,ByteSizeBinary-ByteSizeCandidate]});
+           RemainingSize > 0 ->
+             case binary:longest_common_prefix([Binary,Candidate]) of
+               ByteSizeCandidate ->
+                 <<Pad:8>> = binary:part(Binary,ByteSizeCandidate,1),
+                 MFA = {M,F,Args} = 
+                   {signal_binary_ops,pad,[Candidate,Pad,RemainingSize]},
+                 case Binary == apply(M,F,Args) of
+                   true -> MFA;
+                   false -> false
+                 end;
+               _ -> false
+             end;
            true -> false
          end
      end).
 
-xor_with_pad(Symbol) ->
+%% xor with a symbol (be careful with the difference between words and bytes)
+xor_const() ->
   unary_rewrite
     (fun (Binary,Candidate) ->
-         return_if_eq
-           (Binary,
-            {signal_binary_ops,xor_words_with_pad,[Candidate,Symbol]})
+         if
+           byte_size(Binary) == byte_size(Candidate) ->
+             FirstBinary = binary:first(Binary),
+             FirstCandidate = binary:first(Candidate),
+             XorArg = FirstBinary bxor FirstCandidate,
+             XorCandidate = 
+               << <<(Byte bxor XorArg):8>> || <<Byte:8>> <= Candidate >>,
+             if
+               Binary == XorCandidate ->
+                 {signal_binary_ops, xor_words_with_const, [Candidate,XorArg]};
+               true ->
+                 false
+             end;
+           true -> false
+         end
      end).
 
-return_if_eq(Binary,MFA={M,F,A}) ->
-  case Binary == apply(M,F,A) of
-    true ->
-      MFA;
-    false ->
-      false
-  end.
