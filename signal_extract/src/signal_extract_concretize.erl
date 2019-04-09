@@ -23,11 +23,9 @@ concretize({Fun, Args}, Concretizer) ->
     ConcreteArgs = concretize(Args, Concretizer),
     try apply(Concretizer, Fun, ConcreteArgs)
     catch _:_ ->
-            io:format("Error for ~p\n", [Fun]),
             {Fun, ConcreteArgs}
     end;
 concretize(X, _) ->
-    io:format("Not done ~p\n", [X]),
     X.
 
 

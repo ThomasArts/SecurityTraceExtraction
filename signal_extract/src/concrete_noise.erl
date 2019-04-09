@@ -14,7 +14,6 @@
     {signal_binary_ops, merge, [Bin1, Bin2]}.
 
 'PUBLIC-KEY'(X) ->
-    io:format("X = ~p\n", [X]),
     {enacl, crypto_sign_ed25519_public_to_curve25519, [{signal_binary_ops, extract, [X, 32, 32]}]}.
 
 'GENERATE_KEYPAIR'(_) ->
