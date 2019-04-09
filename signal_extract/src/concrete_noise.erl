@@ -28,5 +28,11 @@
 'HASH'(T) ->
     {enacl,generichash, [64, T]}.
 
+'XOR'(B1, B2) ->
+    {signal_binary_ops, xor_words_with_const, [B1, B2]}.
+
+'PAD_TO_USING'(Bin, Upto, Using) ->
+    {signal_binary_ops,pad, [Bin, Using, Upto]}.
+
 %% 'PAYLOAD'(X) ->
 %%     X.

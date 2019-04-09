@@ -30,9 +30,23 @@ concretize(X, _) ->
 
 
 difference({F, M, As}, {F, M, Bs}) when length(As) == length(Bs) ->
-    {F, M, [difference(A, B) || {A, B} <- lists:zip(As, Bs)]};
+    DiffArgs = [difference(A, B) || {A, B} <- lists:zip(As, Bs)],
+    case lists:all(fun(eq) -> true; (_) -> false end, DiffArgs) of
+        true ->
+            eq;
+        false ->
+            {F, M, DiffArgs}
+    end;
 difference(A, A) ->
-    A;
+    eq;
+difference(A, {F, M, Args} = B) when A =/= B ->
+    Same =
+        try apply(F, M, Args) == A
+        catch _:_ -> false
+        end,
+    if Same -> eq;
+       not Same -> {A, '/=', B}
+    end;
 difference(A, B) ->
     {A, '/=',  B}.
 
