@@ -618,7 +618,20 @@ expand_term(T,Binaries) ->
             produced ->
               case item(source(Register)) of
                 {trace_ts, _, call, Call, _} ->
-                  expand_term(Call,Binaries)
+                  Return = 
+                    case item(return(Register)) of
+                      {trace_ts,_,return_from,_,R,_} -> R
+                    end,
+                  CallAndReturn = extract_return_value(T,Return,Call),
+                  true = (CallAndReturn =/= false),
+                  if
+                    CallAndReturn=/=Call ->
+                      io:format
+                        ("Extractor=~p~n",
+                         [CallAndReturn]);
+                    true -> ok
+                  end,
+                  expand_term(CallAndReturn,Binaries)
               end;
             _ ->
               {name(Register),[T|Binaries]}
@@ -631,6 +644,43 @@ expand_term(T,Binaries) ->
       {list_to_tuple(Result),NewBinaries};
     _ ->
       {T,Binaries}
+  end.
+
+extract_return_value(B,B,Call) ->
+  Call;
+extract_return_value(B,Tuple,Call) when is_tuple(Tuple) ->
+  extract_return_value_from_tuple(B,tuple_to_list(Tuple),Call);
+extract_return_value(B,[Hd|Tl],Call) ->
+  case extract_return_value(B,Hd,Call) of
+    false ->
+      case extract_return_value(B,Tl,Call) of
+        Extractor when is_tuple(Extractor) ->
+          {erlang, tl, [Extractor]};
+        false ->
+          false
+      end;
+    Extractor ->
+      {erlang, hd, [Extractor]}
+  end;
+extract_return_value(B,Map,Call) when is_map(Map) ->
+  List = maps:to_list(Map),
+  case lists:keyfind(B,2,List) of
+    false -> false;
+    {Key,_} -> {maps,get,[Key,Call]}
+  end;
+extract_return_value(_B,_Term,_Call) ->
+  false.
+
+extract_return_value_from_tuple(B,L,Call) when is_list(L) ->
+  extract_return_value_from_tuple(B,1,L,Call).
+extract_return_value_from_tuple(_B,_I,[],_Call) ->
+  false;
+extract_return_value_from_tuple(B,I,[First|Rest],Call) ->
+  case extract_return_value(B,First,Call) of
+    false ->
+      extract_return_value_from_tuple(B,I+1,Rest,Call);
+    Extractor ->
+      {erlang, element, [I,Extractor]}
   end.
 
 print_call({_,F,Args}) ->
