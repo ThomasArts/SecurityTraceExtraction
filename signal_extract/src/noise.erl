@@ -95,15 +95,23 @@
 
 'HKDF'(ChainingKey,InputKeyMaterial,NumOutputs) ->
   TempKey = 'HMAC-HASH'(ChainingKey,InputKeyMaterial),
-  Output1 = 'HMAC-HASH'(TempKey,16#1),
-  Output2 = 'HMAC-HASH'(TempKey,'MERGE'(Output1,16#2)),
+  Output1 = 'HMAC-HASH'(TempKey,<<16#1>>),
+  Output2 = 'HMAC-HASH'(TempKey,'MERGE'(Output1,<<16#2>>)),
   if
     NumOutputs==2 ->
       {Output1,Output2};
     true ->
-      Output3 = 'HMAC-HASH'(TempKey,'MERGE'(Output2,16#3)),
+      Output3 = 'HMAC-HASH'(TempKey,'MERGE'(Output2,<<16#3>>)),
       {Output1,Output2,Output3}
   end.
+
+% ----------------------------------------------------------------------
+
+%% Nondeterministic functions, which are made deterministic through
+%% the introduction of a unique (counter) argument.
+
+'GENERATE_KEYPAIR'(Counter) ->
+  {?FUNCTION_NAME,[Counter]}.
 
 % ----------------------------------------------------------------------
 
@@ -115,9 +123,6 @@
 
 'PUBLIC-KEY'(KeyName) ->
   {?FUNCTION_NAME,[KeyName]}.
-
-'GENERATE_KEYPAIR'(Counter) ->
-  {?FUNCTION_NAME,[Counter]}.
 
 'LOCAL_EPHEMERAL'() ->
   {?FUNCTION_NAME,[]}.
@@ -299,6 +304,8 @@ initialize(ProtocolName,Handshake,Initiator,Prologue,S,E,RS,RE) ->
   PublicKeys = 
     extractPublicKeysFromPreMessages(Initiator, Handshake),
 
+  io:format("Public keys are ~p~n",[PublicKeys]),
+
   HandshakeState7 = 
     lists:foldl
       (fun (Key,AccHandshakeState) ->
@@ -306,7 +313,7 @@ initialize(ProtocolName,Handshake,Initiator,Prologue,S,E,RS,RE) ->
              Key==s -> AccHandshakeState#handshakeState{s='LOCAL_STATIC'()};
              Key==e -> AccHandshakeState#handshakeState{e='LOCAL_EPHEMERAL'()};
              Key==rs -> AccHandshakeState#handshakeState{rs='REMOTE_STATIC'()};
-             Key==re -> AccHandshakeState#handshakeState{rs='REMOTE_EPHEMERAL'()}
+             Key==re -> AccHandshakeState#handshakeState{re='REMOTE_EPHEMERAL'()}
            end
        end,
        HandshakeState6,PublicKeys),
@@ -314,7 +321,7 @@ initialize(ProtocolName,Handshake,Initiator,Prologue,S,E,RS,RE) ->
   lists:foldl
     (fun (PublicKey,AccHandshakeState) -> 
          modify_symmetricState
-           (fun (SS) -> mixHash('PUBLIC-KEY'(PublicKey),SS) end,
+           (fun (SS) -> mixHash('PUBLIC-KEY'(key_value(PublicKey,AccHandshakeState)),SS) end,
             AccHandshakeState) 
      end, 
      HandshakeState7, PublicKeys).
@@ -529,6 +536,14 @@ remote_key(s) ->
   rs;
 remote_key(e) ->
   re.
+
+key_value(Key,HS) ->
+  if
+    Key==s -> HS#handshakeState.s;
+    Key==e -> HS#handshakeState.e;
+    Key==rs -> HS#handshakeState.rs;
+    Key==re -> HS#handshakeState.re
+  end.
 
 messagePatterns({_,Patterns}) ->
   Patterns.

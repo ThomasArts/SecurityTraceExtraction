@@ -125,11 +125,11 @@ analyze_trace_file(FileName) ->
   
   PredefinedBinaries = 
     [
-     {Prologue,'Prologue'},
-     {ClientPrivKey,'ClientPriv'},
-     {ClientPubKey,'ClientPub'},
-     {ServerPubKey,'ServerPub'},
-     {erlang:list_to_binary(["Noise","_","XK","_","25519","_","ChaChaPoly","_","BLAKE2b"]),'NoiseProt'}
+%%     {Prologue,'Prologue'},
+%%     {ClientPrivKey,'ClientPriv'},
+%%     {ClientPubKey,'ClientPub'},
+%%     {ServerPubKey,'ServerPub'},
+%%     {erlang:list_to_binary(["Noise","_","XK","_","25519","_","ChaChaPoly","_","BLAKE2b"]),'NoiseProt'}
     ],
 
   NonFunctions =
@@ -158,12 +158,12 @@ analyze_trace_file(FileName) ->
 %%  io:format("Traceback:~n~p~n",
 %%            [graphviz_traceback("trace2.dot",Traceback,2,PredefinedBinaries)]),
 
-  Sends = sends(DetTrace, NonFunctions),
+  {Sends,{Binaries,_}} = sends(DetTrace, NonFunctions),
   [_Port,FirstSend] = lists:nth(1,Sends),
-  ?LOG
+  io:format
     ("~n~nThe first send is~n~p~n",
      [FirstSend]),
-  FirstSend.
+  {FirstSend,Binaries}.
 
 get_key(KeyFileName,KeyDir,Type) ->
   FilePath = KeyDir++"/"++KeyFileName++if Type==priv -> ""; Type==pub -> ".pub" end,
@@ -480,34 +480,43 @@ sends(Trace,NF) ->
          end
      end, 
      Trace,
-     fun (Call,Time,_,_) ->
-         {ExpandedCall={_M,_F,Args},NewBinaries,NewCounter} = expand_term(Call,[],0,NF),
-         Args
-     end).
+     fun (Call,Time,{Bs,Cnt},_,_) ->
+         {ExpandedCall={_M,_F,Args},NewBinaries,NewCounter} = 
+           expand_term(Call,Bs,Cnt,NF),
+         {Args,{NewBinaries,NewCounter}}
+     end,
+     {[],0}).
 
-collect_at_calls(EventRecognizer,A,F) ->
-  collect_at_calls(EventRecognizer,0,array:size(A),A,F).
-collect_at_calls(_EventRecognizer,I,Size,_A,_F) when I>=Size ->
-  [];
-collect_at_calls(EventRecognizer,I,Size,A,F) ->
+collect_at_calls(EventRecognizer,A,F,Arg) ->
+  collect_at_calls(EventRecognizer,0,array:size(A),A,F,Arg).
+collect_at_calls(_EventRecognizer,I,Size,_A,_F,Arg) when I>=Size ->
+  {[],Arg};
+collect_at_calls(EventRecognizer,I,Size,A,F,Arg) ->
   Event = array:get(I,A),
-  Results = collect_at_calls(EventRecognizer,I+1,Size,A,F),
   case EventRecognizer(I,Event) of
     true ->
       {trace_ts,_,call,Call,_} = Event,
-      [F(Call,I,Size,A) | Results];
+      {Result,NewArg} = F(Call,I,Arg,Size,A),
+      {Results,NewerArg} = 
+        collect_at_calls(EventRecognizer,I+1,Size,A,F,NewArg),
+      {[Result | Results], NewerArg};
     false ->
-      Results
+      collect_at_calls(EventRecognizer,I+1,Size,A,F,Arg)
   end.
   
+%% Expands a term with binaries inside, substituting binaries for
+%% the function calls that generated them. 
+%% Generates variables {var,X} corresponding 
+%% to calls of non-deterministic functions.
+%% Returns an expanded term and a set of variable definitions.
+%%
 %% NF == [{M,F,Arity}] listing "non-functional" functions, i.e.,
 %% functions with side effects.
 %% These include, for instance, functions to generate new keypairs (from nothing).
-%%
 expand_term(T,Binaries,Counter,NF) ->
   case lists:keyfind(T,1,Binaries) of
-    {_T, Var, _Value} ->
-      {Var,Binaries,Counter};
+    {_T, Value} ->
+      {Value, Binaries, Counter};
     false ->
       case T of
         {M,F,Args} when is_atom(M), is_atom(F), is_list(Args) ->
@@ -517,17 +526,21 @@ expand_term(T,Binaries,Counter,NF) ->
                    {RArg,NB1,Cnt1} = expand_term(Arg,NBs,Cnt,NF),
                    {[RArg|AccArgs],NB1,Cnt1}
                end, {[],Binaries,Counter}, Args),
-          RewrittenMFA = {M,F,RewrittenArgs},
           MFArity = {M,F,length(Args)},
-          {NewerBinaries,NewerCounter} =
-            case lists:member(MFArity,NF) of
-              true -> 
-                Var = {var,Counter},
-                {[{T,Var,RewrittenMFA}|NewBinaries], NewCounter+1};
-              false -> 
-                {NewBinaries, NewCounter}
-            end,
-          {RewrittenMFA,NewerBinaries,NewerCounter};
+          case lists:member(MFArity,NF) of
+            true -> 
+              NewRewrittenMFA = {M,F,RewrittenArgs++[Counter]},
+              {
+                NewRewrittenMFA,
+                [{T,NewRewrittenMFA}|NewBinaries], 
+                NewCounter+1
+              };
+            false -> 
+              {
+              {M,F,RewrittenArgs},
+              NewBinaries, 
+              NewCounter}
+            end;
         _ when is_binary(T) ->
           Register = get_binary(T),
           if
@@ -548,16 +561,14 @@ expand_term(T,Binaries,Counter,NF) ->
                       true = (CallAndReturn =/= false),
                       if
                         CallAndReturn=/=Call ->
-                          io:format
+                          ?LOG
                             ("Extractor=~p~n",
                              [CallAndReturn]);
                         true -> ok
                       end,
                       expand_term(CallAndReturn,Binaries,Counter,NF)
                   end;
-                _ ->
-                  %% This is wrong but let us fix it later...
-                  {name(Register),[T|Binaries],Counter}
+                _ -> {T, Binaries, Counter}
               end
           end;
         _ when is_list(T) ->
@@ -1121,3 +1132,5 @@ xor_const() ->
          end
      end).
 
+%% {T,S} = signal_extract_concretize:start(), io:format("~n~nComparison:~n~p~nSubstitution:~n~p~n",[T,S]).
+%% 

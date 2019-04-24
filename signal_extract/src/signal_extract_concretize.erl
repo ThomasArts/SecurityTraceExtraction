@@ -12,10 +12,10 @@ start() ->
     start(concrete_noise).
 
 start(Concretizer) ->
-    {SemanticTerm, TraceTerm} = read(),
+    {SemanticTerm, TraceTerm, Binaries} = read(),
     Concrete = concretize(SemanticTerm, Concretizer),
     io:format("****************************************************\n"),
-    difference(Concrete, TraceTerm).
+  difference(Concrete, TraceTerm, []).
 
 concretize(List, Concretizer) when is_list(List) ->
     [ concretize(E, Concretizer) || E <- List ];
@@ -29,30 +29,61 @@ concretize(X, _) ->
     X.
 
 
-difference({F, M, As}, {F, M, Bs}) when length(As) == length(Bs) ->
-    DiffArgs = [difference(A, B) || {A, B} <- lists:zip(As, Bs)],
-    case lists:all(fun(eq) -> true; (_) -> false end, DiffArgs) of
-        true ->
-            eq;
-        false ->
-            {F, M, DiffArgs}
+difference({F, M, As}, {F, M, Bs}, Subs) when length(As) == length(Bs) ->
+  {Results, NewSubs} = 
+    lists:foldl
+      (fun ({A,B},{Rs,S}) -> {R,NewS} = difference(A,B,S), {[R|Rs],NewS} end, {[],Subs},
+       lists:zip(As,Bs)),
+  case lists:all(fun(eq) -> true; (_) -> false end, Results) of
+    true ->
+      {eq, NewSubs};
+    false ->
+      {{F, M, Results}, NewSubs}
     end;
-difference(A, A) ->
-    eq;
-difference(A, {F, M, Args} = B) when A =/= B ->
+difference(A, A, Subst) ->
+    {eq, Subst};
+difference(A, {F, M, Args} = B, Subs) when A =/= B ->
     Same =
         try apply(F, M, Args) == A
         catch _:_ -> false
         end,
-    if Same -> eq;
-       not Same -> {A, '/=', B}
+    if Same -> {eq, Subs};
+       not Same -> 
+        case lists:member({A,B},Subs) of
+          true -> {eq, Subs};
+          false -> {{A, '/=', B}, [{A,B}|Subs]}
+        end
     end;
-difference(A, B) ->
-    {A, '/=',  B}.
+difference(A, B, Subs) ->
+  case lists:member({A,B},Subs) of
+    true -> {eq, Subs};
+    false -> {{A, '/=', B}, [{A,B}|Subs]}
+  end.
 
+%% difference({F, M, As}, {F, M, Bs}) when length(As) == length(Bs) ->
+%%     DiffArgs = [difference(A, B) || {A, B} <- lists:zip(As, Bs)],
+%%     case lists:all(fun(eq) -> true; (_) -> false end, DiffArgs) of
+%%         true ->
+%%             eq;
+%%         false ->
+%%             {F, M, DiffArgs}
+%%     end;
+%% difference(A, A) ->
+%%     eq;
+%% difference(A, {F, M, Args} = B) when A =/= B ->
+%%     Same =
+%%         try apply(F, M, Args) == A
+%%         catch _:_ -> false
+%%         end,
+%%     if Same -> eq;
+%%        not Same -> {A, '/=', B}
+%%     end;
+%% difference(A, B) ->
+%%     {A, '/=',  B}.
+%% 
 
 read() ->
-  TraceTerm = signal_extract:analyze_trace_file("enoise.trace"),
+  {TraceTerm, Binaries} = signal_extract:analyze_trace_file("enoise.trace"),
   {wrote, ST} = noise:test(),
   SemanticTerm =
     case ST of
@@ -72,4 +103,4 @@ read() ->
       Term ->
         Term
     end,
-    {SemanticTerm, TraceTerm}.
+    {SemanticTerm, TraceTerm, Binaries}.
