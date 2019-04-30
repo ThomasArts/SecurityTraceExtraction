@@ -191,6 +191,8 @@ analyze_trace_file(FileName) ->
 %%  io:format("Traceback:~n~p~n",
 %%            [graphviz_traceback("trace2.dot",Traceback,2,PredefinedBinaries)]),
 
+  io:format("Before send analysis~n"),
+
   {Sends,{Binaries,_}} = sends(DetTraces, NonFunctions),
   [_Port,FirstSend] = lists:nth(1,Sends),
   io:format
@@ -534,6 +536,13 @@ return_of_function(Pid,I,Skip,Size,A) ->
         true -> 
           return_of_function(Pid,I+1,return_from(Item,MFA,Skip),Size,A)
       end;
+    {trace_ts, Pid, exception_from, MFA, _, _} ->
+      if
+        Skip == [] -> 
+          I;
+        true -> 
+          return_of_function(Pid,I+1,return_from(Item,MFA,Skip),Size,A)
+      end;
     {trace_ts, Pid, call, {M,F,Args}, _} ->
       return_of_function(Pid,I+1,[{Item,{M,F,length(Args)}}|Skip],Size,A);
     _ ->
@@ -558,6 +567,8 @@ call_of_function(Pid,I,Skip,Size,A) ->
       end;
     {trace_ts, Pid, return_from, MFA, _, _} ->
       call_of_function(Pid,I-1,[{Item,MFA}|Skip],Size,A);
+    {trace_ts, Pid, exception_from, MFA, _, _} ->
+      call_of_function(Pid,I-1,[{Item,MFA}|Skip],Size,A);
     _ ->
       call_of_function(Pid,I-1,Skip,Size,A)
   end.
@@ -577,23 +588,28 @@ call_limits(Pid,I,Traces) ->
 %% signal_extract:analyze_trace_file("enoise.trace").
 
 sends(Traces,NF) ->
-  lists:flatmap
-    (fun ({Pid,Trace}) ->
-         collect_at_event
-           (fun (_Time,Event) -> 
-                case Event of
-                  {trace_ts,_,call,{enoise,gen_tcp_snd_msg,_},_} -> true;
-                  _ -> false
-                end
-            end, 
-            Trace,
-            fun (Call,Time,{Bs,Cnt},_,_) ->
-                {ExpandedCall={_M,_F,Args},NewBinaries,NewCounter} = 
-                  expand_term(Call,Bs,Cnt,NF),
-                {Args,{NewBinaries,NewCounter}}
-            end,
-            {[],0})
-     end, Traces).
+  lists:foldl
+    (fun ({Pid,Trace},{Terms,{Bs,Cnt}}) ->
+         {NTerms,Arg} = send_collect(Trace,NF,Bs,Cnt),
+         {NTerms++Terms,Arg}
+     end, {[], {[],0}}, Traces).
+
+send_collect(Trace,NF,BsP,CntP) ->
+  collect_at_event
+    (fun (_Time,Event) -> 
+         case Event of
+           {trace_ts,_,call,{enoise,gen_tcp_snd_msg,_},_} -> true;
+           _ -> false
+         end
+     end, 
+     Trace,
+     fun (Call,Time,{Bs,Cnt},_,_) ->
+         io:format("~nwill expand ~p~n",[Call]),
+         {ExpandedCall={_M,_F,Args},NewBinaries,NewCounter} = 
+           expand_term(Call,Bs,Cnt,NF),
+         {Args,{NewBinaries,NewCounter}}
+     end,
+     {BsP,CntP}).
 
 collect_at_event(EventRecognizer,A,F,Arg) ->
   collect_at_event(EventRecognizer,0,array:size(A),A,F,Arg).
@@ -627,6 +643,7 @@ collect_at_event(EventRecognizer,I,Size,A,F,Arg) ->
 %% functions with side effects.
 %% These include, for instance, functions to generate new keypairs (from nothing).
 expand_term(T,Binaries,Counter,NF) ->
+  io:format("expand_term(~p)~n",[T]),
   case lists:keyfind(T,1,Binaries) of
     {_T, Value} ->
       {Value, Binaries, Counter};
@@ -662,7 +679,7 @@ expand_term(T,Binaries,Counter,NF) ->
             true ->
               case binary_type(Register) of
                 rewrite ->
-                  expand_term(item(source(Register)),Binaries,Counter,NF);
+                  expand_term(value(Register),Binaries,Counter,NF);
                 produced ->
                   case item(source(Register)) of
                     {trace_ts, _, call, Call, _} ->
