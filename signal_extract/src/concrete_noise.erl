@@ -25,6 +25,8 @@
 'PRIVATE-KEY'(X) ->
   {enacl, crypto_sign_ed25519_secret_to_curve25519, [X]}.
 
+%% This looks weird, why generate a key pair and then only take the secret key
+%% But the code uses the secret key to extract the public key from.
 'GENERATE_KEYPAIR'(X) ->
   {maps, get, [secret, {enacl, crypto_sign_ed25519_keypair, [X]}]}.
 
@@ -37,6 +39,7 @@
 'TRUNCATE'(Bin, Length) ->
   {signal_binary_ops, truncate, [Bin, Length]}.
 
+%% We could possibly get matching as primitives in this specification language
 'HASH'(T) ->
   {erlang, element, [2, {enacl,generichash, [64, T]}]}.
 
