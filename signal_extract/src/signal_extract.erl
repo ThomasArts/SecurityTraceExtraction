@@ -1,14 +1,14 @@
 -module(signal_extract).
 
--export([noisy_trace/0,register_binaries/2,trace_make_call_deterministic/1]).
--export([get_trace/1,compose_binaries/1,print_array/2]).
+-export([noisy_trace/0,register_binaries/3,trace_make_call_deterministic/1]).
+-export([get_traces/1,compose_binaries/1,print_array/2]).
 -export([print_binary_register/0,show_trace/1,show_registered_trace/1]).
 
 -compile(export_all).
 
 -export([print_call/1,print_full_call/1]).
 
-%%-define(debug,true).
+-define(debug,true).
 -ifdef(debug).
 -define(LOG(X,Y),
 	io:format("~p(~p): ~s",[?MODULE,self(),io_lib:format(X,Y)])).
@@ -16,6 +16,8 @@
 -define(LOG(X,Y),true).
 -endif.
 
+-record(binary,{value,name,seen,time,source,return,pid}).
+-record(item,{loc,item}).
 
 
 %% rebar3 as test shell
@@ -49,14 +51,15 @@ do_trace(TracedPid,ToPid,Modules) ->
                [
                 %%call,arity,return_to,
                 call,
-                %% 'receive',send,procs,ports,set_on_spawn, -- better not
+                set_on_spawn,'receive',send,
+                %% procs,ports, -- better not
                 return_to,
                 %% set_on_link,
                 %%arity,
                 %%all,
                 timestamp,{tracer,ToPid}
                ]),
-  erlang:trace_pattern({'_', '_', '_'}, [{'_', [], [{return_trace}]}], [global]),
+  erlang:trace_pattern({'_', '_', '_'}, [{'_', [], [{exception_trace},{return_trace}]}], [global]),
   erlang:trace_pattern({enacl_nif, '_', '_'}, false, []),
   lists:foreach
     (fun (Module) -> 
@@ -104,11 +107,25 @@ tracer1(L) ->
       tracer1(L)
   end.
 
-get_trace(FileName) ->
+get_traces(FileName) ->
   {ok,B} = file:read_file(FileName),
   case binary_to_term(B) of
     {trace,L} ->
-      array:from_list(L)
+      PidTraces = 
+        lists:foldl
+          (fun (Item,Traces) ->
+               trace_ts = element(1,Item),
+               Pid = element(2,Item),
+               case lists:keyfind(Pid,1,Traces) of
+                 false -> 
+                   lists:keystore(Pid,1,Traces,{Pid,[Item]});
+                 {_,Trace} -> 
+                   lists:keyreplace(Pid,1,Traces,{Pid,[Item|Trace]})
+               end
+           end, [], lists:reverse(L)),
+      lists:map
+        (fun ({Pid,Trace}) -> {Pid,array:from_list(Trace)} end,
+         PidTraces)
   end.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -116,7 +133,7 @@ get_trace(FileName) ->
 analyze_trace_file(FileName) ->
 
   %% Later we should generalise this...
-  Trace = get_trace(FileName),
+  Traces = get_traces(FileName),
   KeyDir = code:priv_dir(signal_extract)++"/testing_keys",
   ClientPrivKey = get_key("client_key_25519",KeyDir,priv),
   ClientPubKey  = get_key("client_key_25519",KeyDir,pub),
@@ -138,16 +155,32 @@ analyze_trace_file(FileName) ->
     ],
 
   io:format("~n~nDeterminizing trace...~n"),
-  DetTrace = trace_make_call_deterministic(Trace),
-  
+  DetTraces = 
+    lists:map
+      (fun ({Pid,Trace}) -> {Pid,trace_make_call_deterministic(Trace)} end,
+       Traces),
   io:format("~n~nGiving names to binaries (and finding call sites)...~n"),
-  register_binaries(DetTrace, PredefinedBinaries),
+  lists:foreach
+    (fun ({Pid,A}) -> 
+         register_binaries(Pid, A, PredefinedBinaries)
+     end, DetTraces),
   
+  io:format("Traces:~n"),
+  lists:foreach
+    (fun ({Pid,Trace}) ->
+         io:format("~nPid ~p:~n",[Pid]),
+         show_trace(Trace)
+     end, Traces),
+
+  io:format("Det Traces:~n"),
+  lists:foreach
+    (fun ({Pid,Trace}) ->
+         io:format("~nPid ~p:~n",[Pid]),
+         show_trace(Trace)
+     end, DetTraces),
+
   io:format("~n~nTrying to derive binaries using rewriting...~n"),
-  compose_binaries(DetTrace),
-  
-  io:format("~n~n~nTrace:~n~n"),
-  show_registered_trace(DetTrace),
+  compose_binaries(DetTraces),
   
   io:format("~n~n~nBinary definitions:~n~n"),
   print_binary_register(),
@@ -158,7 +191,7 @@ analyze_trace_file(FileName) ->
 %%  io:format("Traceback:~n~p~n",
 %%            [graphviz_traceback("trace2.dot",Traceback,2,PredefinedBinaries)]),
 
-  {Sends,{Binaries,_}} = sends(DetTrace, NonFunctions),
+  {Sends,{Binaries,_}} = sends(DetTraces, NonFunctions),
   [_Port,FirstSend] = lists:nth(1,Sends),
   io:format
     ("~n~nThe first send is~n~p~n",
@@ -195,7 +228,7 @@ trace_make_call_deterministic(I,Size,A,B,_J,RemainingCalls) when I>=Size ->
           (fun (Call,{Index,Arr}) -> 
                {Index+1,
                 array:set(Index,{trace_ts, Pid, return_from, Call, undefined, Ts}, Arr)}
-           end, {0,B}, RemainingCalls),
+           end, {Size,B}, RemainingCalls),
       Arr;
     true -> B
   end;
@@ -204,32 +237,10 @@ trace_make_call_deterministic(I,Size,A,B,J,ActiveCalls) ->
   case Item of
     void ->
       trace_make_call_deterministic(I+1,Size,A,B,J,ActiveCalls);
-    {trace_ts, Pid, return_from, Call, _Value, TimeStamp} ->
-      case ActiveCalls of
-        [{_,Call}|Rest] ->
-          NewB = array:set(J,Item,B),
-          trace_make_call_deterministic(I+1,Size,A,NewB,J+1,Rest);
-        [{OtherI,OtherCall}|_Rest] ->
-          io:format
-            ("~n*** Error: ~p: returned from ~p but expected return to ~p:~p~n",
-             [I,Call,OtherI,OtherCall]),
-          ReturnedCall = 
-            {trace_ts, Pid, return_from, OtherCall, undefined, TimeStamp},
-          {NewActiveCalls,NewA} =
-            case delete_call(OtherCall,ActiveCalls) of
-              false ->
-                {ActiveCalls,A};
-              {Index,_,ActiveCalls1} ->
-                {ActiveCalls1,array:set(Index,void,A)}
-            end,
-          NewB = array:set(J,ReturnedCall,B),
-          trace_make_call_deterministic(I,Size,NewA,NewB,J+1,NewActiveCalls);
-        [] ->
-          io:format
-            ("~n*** Error: ~p: returned from ~p but there was no active call~n",
-             [I,Call]),
-          trace_make_call_deterministic(I+1,Size,A,B,J,ActiveCalls)
-      end;
+    {trace_ts, Pid, return_from, Call, _Value, _TimeStamp} ->
+      leaving(Call,return_from,Item,I,Size,A,B,J,ActiveCalls);
+    {trace_ts, Pid, exception_from, Call, _Value, _TimeStamp} ->
+      leaving(Call,exception_from,Item,I,Size,A,B,J,ActiveCalls);
     {trace_ts, _Pid, call, {M,F,Args}, _} ->
       NewB = array:set(J,Item,B),
       trace_make_call_deterministic
@@ -238,6 +249,35 @@ trace_make_call_deterministic(I,Size,A,B,J,ActiveCalls) ->
     _ ->
       NewB = array:set(J,Item,B),
       trace_make_call_deterministic(I+1,Size,A,NewB,J+1,ActiveCalls)
+  end.
+
+leaving(Call,Reason,Item,I,Size,A,B,J,ActiveCalls) ->
+  Pid = element(2,Item),
+  TimeStamp = element(size(Item),Item),
+  case ActiveCalls of
+    [{_,Call}|Rest] ->
+      NewB = array:set(J,Item,B),
+      trace_make_call_deterministic(I+1,Size,A,NewB,J+1,Rest);
+    [{OtherI,OtherCall}|_Rest] ->
+      io:format
+        ("~n*** Error: ~p: left (~p) ~p but expected return to~n~p:~p~n",
+         [I,Reason,Call,OtherI,OtherCall]),
+      ReturnedCall = 
+        {trace_ts, Pid, return_from, OtherCall, undefined, TimeStamp},
+      {NewActiveCalls,NewA} =
+        case delete_call(OtherCall,ActiveCalls) of
+          false ->
+            {ActiveCalls,A};
+          {Index,_,ActiveCalls1} ->
+            {ActiveCalls1,array:set(Index,void,A)}
+        end,
+      NewB = array:set(J,ReturnedCall,B),
+      trace_make_call_deterministic(I,Size,NewA,NewB,J+1,NewActiveCalls);
+    [] ->
+      io:format
+        ("~n*** Error: ~p: left ~p but there was no active call~n",
+         [I,Call]),
+      trace_make_call_deterministic(I+1,Size,A,B,J,ActiveCalls)
   end.
 
 delete_call(Call,[]) ->    
@@ -255,13 +295,15 @@ delete_call(Call,[OtherItem|Rest]) ->
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-register_binaries(A,Pre) ->
-  register_binaries(0,array:size(A),Pre,A).
-register_binaries(I,Size,_Pre,_A) when I>=Size ->
+register_binaries(Pid,A,Pre) ->
+  register_binaries(Pid,0,array:size(A),Pre,A).
+register_binaries(Pid,I,Size,_Pre,_A) when I>=Size ->
   ok;
-register_binaries(I,Size,Pre,A) ->
-  TraceItem = array:get(I,A),
+register_binaries(Pid,I,Size,Pre,A) ->
+  Item = array:get(I,A),
+  TraceItem = #item{loc=I,item=Item},
   Binaries = binaries(TraceItem),
+  Timestamp = element(size(TraceItem),TraceItem),
   lists:foreach
     (fun (Binary) ->
          if
@@ -271,57 +313,78 @@ register_binaries(I,Size,Pre,A) ->
                  ok;
                false ->
                  Register =
-                   case TraceItem of
-                     {trace_ts, Pid, return_from, _Call, _Value, _TimeStamp} ->
+                   case Item of
+                     {trace_ts, Pid, return_from, _Call, _Value, TimeStamp} ->
                        case call_of_function(Pid,I-1,A) of
                          CallSite when is_integer(CallSite) ->
-                           CallItem = array:get(CallSite,A),
-                           {produced,{CallSite,CallItem},{I,TraceItem}};
+                           CallItem = 
+                             #item{loc=CallSite,item=array:get(CallSite,A)},
+                           #binary
+                             {
+                              pid=Pid,
+                              seen=produced,
+                              value=Binary,
+                              source=CallItem,
+                              return=TraceItem,
+                              time=TimeStamp
+                             };
                          _ ->
                            io:format
                              ("~n*** Error: cannot find call corresponding to~n  ~p~n",
                               [TraceItem]),
                            error(bad)
                        end;
-                     _ -> {consumed,{I,TraceItem}}
+                     _ -> 
+                       #binary
+                         {
+                          pid=Pid,
+                          seen=consumed,
+                          source=TraceItem,
+                          time=Timestamp,
+                          value=Binary
+                         }
                    end,
                  register_binary(Binary,Register,Pre)
              end;
            true -> ok
          end
      end, Binaries),
-  register_binaries(I+1,Size,Pre,A).
+  register_binaries(Pid,I+1,Size,Pre,A).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-compose_binaries(A) ->
+compose_binaries(Traces) ->
   lists:foreach
     (fun ({Binary,Register}) ->
+         io:format("binary ~p~n",[Register]),
          case is_consumed(Register) orelse is_produced(Register) of
            true ->
              Source = source(Register),
-             Pid = pid(item(Source)),
+             SourcePid = pid(Register),
              ?LOG("~ntrying to compose binary~n~p~n==~p~n",[Register,Binary]),
              {StartTime,EndTime} = 
                case is_produced(Register) of
-                 true -> {time(Source),time(return(Register))};
-                 _ -> call_limits(Pid,time(Source),A)
+                 true -> {loc(Source),loc(return(Register))};
+                 _ -> call_limits(SourcePid,loc(Source),Traces)
                end,
+             {_,A} = lists:keyfind(SourcePid,1,Traces),
              PreContextBinaries = 
-               lists:usort(defined_in_call(Pid,StartTime,EndTime,A)),
+               lists:usort(defined_in_call(SourcePid,StartTime,EndTime,A)),
+             io:format("num of precontextbinaries is ~p~n",
+                       [length(PreContextBinaries)]),
              FirstTimeSeen =
                case is_consumed(Register) of
                  true ->
-                   time(Source);
+                   loc(Source);
                  false ->
-                   time(return(Register))
+                   loc(return(Register))
                end,
              ContextBinaries =
                lists:filter
                  (fun ({_Binary,BinaryRegister}) ->
                       case is_produced(BinaryRegister) of
                         true ->
-                          time(source(BinaryRegister)) =< FirstTimeSeen;
+                          loc(source(BinaryRegister)) =< FirstTimeSeen;
                         false ->
                           true
                       end
@@ -343,7 +406,13 @@ compose_binaries(A) ->
                    false -> ok
                  end;
                Sol ->
-                 update_binary(Binary,{rewrite,{time(Source),Sol}})
+                 update_binary
+                   (Binary,
+                    Register#binary
+                    {seen=rewrite,
+                     name=name(Register),
+                     source=Source,
+                     value=Sol})
              end;
            _ -> ok
          end
@@ -359,11 +428,37 @@ registered_binaries(Term) ->
      end, [], binaries(Term)).
 
 defined_in_call(Pid,FromTime,ToTime,A) ->
+  Size = array:size(A),
+  if
+    (FromTime > ToTime) or (ToTime > Size) ->
+      io:format
+        ("~n*** Error: incorrect parameters ~p -> ~p when ~p~n",
+         [FromTime,ToTime,Size]),
+      error(bad);
+    true -> ok
+  end,
   defined_in_call(Pid,FromTime,ToTime,-1,array:size(A),A).
 defined_in_call(Pid,FromTime,ToTime,Skip,Size,A) ->
+  if
+    FromTime > ToTime ->
+      io:format
+        ("~n*** Error: defined_in_call(~p,~p)~n",
+         [FromTime,ToTime]),
+      error(bad);
+    true -> ok
+  end,
   Item = array:get(FromTime,A),
   case Item of
     {trace_ts, Pid, return_from, _, _, _} ->
+      if 
+        Skip =< 0 ->
+          registered_binaries(Item);
+        Skip == 1 ->
+          registered_binaries(Item) ++ defined_in_call(Pid,FromTime+1,ToTime,Skip-1,Size,A);
+        true ->
+          defined_in_call(Pid,FromTime+1,ToTime,Skip-1,Size,A)
+      end;
+    {trace_ts, Pid, exception_from, _, _, _} ->
       if 
         Skip =< 0 ->
           registered_binaries(Item);
@@ -424,7 +519,10 @@ return_from(Item,MFA,Skip=[{Item2,MFA1}|Rest]) ->
 
 return_of_function(Pid,I,A) ->
   return_of_function(Pid,I,[],array:size(A),A).
-return_of_function(_Pid,I,_Skip,Size,_A) when I>=Size ->
+return_of_function(_Pid,I,Skip,Size,_A) when I>=Size ->
+  io:format
+    ("~n*** Warning: could not find return loc, skip:~n~p~n",
+     [Skip]),
   Size-1;
 return_of_function(Pid,I,Skip,Size,A) ->
   Item = array:get(I,A),
@@ -444,7 +542,10 @@ return_of_function(Pid,I,Skip,Size,A) ->
 
 call_of_function(Pid,I,A) ->
   call_of_function(Pid,I,[],array:size(A),A).
-call_of_function(_Pid,-1,_Skip,Size,_A) ->
+call_of_function(_Pid,-1,Skip,Size,_A) ->
+  io:format
+    ("~n*** Warning: could not find call loc, skip:~n~p~n",
+     [Skip]),
   Size-1;
 call_of_function(Pid,I,Skip,Size,A) ->
   Item = array:get(I,A),
@@ -461,47 +562,59 @@ call_of_function(Pid,I,Skip,Size,A) ->
       call_of_function(Pid,I-1,Skip,Size,A)
   end.
 
-call_limits(Pid,I,A) ->
+call_limits(Pid,I,Traces) ->
+  {_,A} = lists:keyfind(Pid,1,Traces),
   CallSite = call_of_function(Pid,I-1,A), 
   ReturnSite = return_of_function(Pid,I,A),
   ?LOG("call_limits(~p) = {~p,~p}~n",[I,CallSite,ReturnSite]),
+  io:format
+    ("pos=~p~nCallsite=~p~nReturnsite=~p~n",
+     [array:get(I,A),array:get(CallSite,A),array:get(ReturnSite,A)]),
   {CallSite,ReturnSite}.
   
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %% signal_extract:analyze_trace_file("enoise.trace").
 
-sends(Trace,NF) ->
-  collect_at_calls
-    (fun (_Time,Event) -> 
-         case Event of
-           {trace_ts,_,call,{enoise,gen_tcp_snd_msg,_},_} -> true;
-           _ -> false
-         end
-     end, 
-     Trace,
-     fun (Call,Time,{Bs,Cnt},_,_) ->
-         {ExpandedCall={_M,_F,Args},NewBinaries,NewCounter} = 
-           expand_term(Call,Bs,Cnt,NF),
-         {Args,{NewBinaries,NewCounter}}
-     end,
-     {[],0}).
+sends(Traces,NF) ->
+  lists:flatmap
+    (fun ({Pid,Trace}) ->
+         collect_at_event
+           (fun (_Time,Event) -> 
+                case Event of
+                  {trace_ts,_,call,{enoise,gen_tcp_snd_msg,_},_} -> true;
+                  _ -> false
+                end
+            end, 
+            Trace,
+            fun (Call,Time,{Bs,Cnt},_,_) ->
+                {ExpandedCall={_M,_F,Args},NewBinaries,NewCounter} = 
+                  expand_term(Call,Bs,Cnt,NF),
+                {Args,{NewBinaries,NewCounter}}
+            end,
+            {[],0})
+     end, Traces).
 
-collect_at_calls(EventRecognizer,A,F,Arg) ->
-  collect_at_calls(EventRecognizer,0,array:size(A),A,F,Arg).
-collect_at_calls(_EventRecognizer,I,Size,_A,_F,Arg) when I>=Size ->
+collect_at_event(EventRecognizer,A,F,Arg) ->
+  collect_at_event(EventRecognizer,0,array:size(A),A,F,Arg).
+collect_at_event(_EventRecognizer,I,Size,_A,_F,Arg) when I>=Size ->
   {[],Arg};
-collect_at_calls(EventRecognizer,I,Size,A,F,Arg) ->
+collect_at_event(EventRecognizer,I,Size,A,F,Arg) ->
   Event = array:get(I,A),
   case EventRecognizer(I,Event) of
     true ->
-      {trace_ts,_,call,Call,_} = Event,
-      {Result,NewArg} = F(Call,I,Arg,Size,A),
+      {Result,NewArg} = 
+        case Event of
+          {trace_ts,_,call,Call,_} ->
+            F(Call,I,Arg,Size,A);
+          {trace_ts,_,return_from,_,FunResult,_} ->
+            F(FunResult,I,Arg,Size,A)
+        end,
       {Results,NewerArg} = 
-        collect_at_calls(EventRecognizer,I+1,Size,A,F,NewArg),
+        collect_at_event(EventRecognizer,I+1,Size,A,F,NewArg),
       {[Result | Results], NewerArg};
     false ->
-      collect_at_calls(EventRecognizer,I+1,Size,A,F,Arg)
+      collect_at_event(EventRecognizer,I+1,Size,A,F,Arg)
   end.
   
 %% Expands a term with binaries inside, substituting binaries for
@@ -718,10 +831,26 @@ find_binary(Binary,[{Binaries,State}|Rest]) ->
 is_registered(Binary) ->
   signal_extract_utils:get(Binary) =/= undefined.
 
-register_binary(Binary,Type,Pre) ->
-  case is_registered(Binary) of
-    true -> ok;
-    false ->
+register_binary(Binary,Reg,Pre) ->
+  case get_binary(Binary) of
+    OldReg when is_record(OldReg,binary) ->
+      RegType = binary_type(Reg),
+      OldRegType = binary_type(OldReg),
+      RegTime = binary_time(Reg),
+      OldRegTime = binary_time(OldReg),
+      IsRegOlder = timer:now_diff(RegTime,OldRegTime) =< 0,
+      if
+        OldRegType==consumed, IsRegOlder ->
+          signal_extract_utils:put(Binary,Reg#binary{name=OldReg#binary.name});
+        OldRegType==produced, IsRegOlder ->
+          io:format
+            ("~n*** Warning: item ~p~nconsumed before produced:~n~p~n",
+             [OldReg,Reg]),
+          error(bad);
+        true ->
+          ok
+      end;
+    undefined ->
       Name =
         case lists:keyfind(Binary,1,Pre) of
           false ->
@@ -735,13 +864,13 @@ register_binary(Binary,Type,Pre) ->
 
           {_,Nickname} -> Nickname
         end,
-      signal_extract_utils:put(Binary,{Name,Type})
+      signal_extract_utils:put(Binary,Reg#binary{name=Name})
   end.
 
-update_binary(Binary,Type) ->
+update_binary(Binary,Register) ->
   case get_binary(Binary) of
-    Register ->
-      signal_extract_utils:put(Binary,{name(Register),Type})
+    OldRegister when is_record(OldRegister,binary) ->
+      signal_extract_utils:put(Binary,Register)
   end.
 
 get_binary(Binary) ->
@@ -762,31 +891,24 @@ is_consumed(Binary) ->
       false
   end.
 
-name({Name,_}) ->
+pid(#binary{pid=Pid}) ->
+  Pid.
+binary_type(#binary{seen=Type}) ->
+  Type.
+binary_time(#binary{time=Timestamp}) ->
+  Timestamp.
+name(#binary{name=Name}) ->
   Name.
-source({_,{produced,Source,_}}) ->
-  Source;
-source({_,{_,Source}}) ->
+source(#binary{source=Source}) ->
   Source.
-return({_,{produced,_,Return}}) ->
+return(#binary{return=Return}) ->
   Return.
-binary_type({_,{Type,_,_}}) ->
-  Type;
-binary_type({_,{Type,_}}) ->
-  Type;
-binary_type({_,Type}) ->
-  Type.
-time({Time,_}) ->
-  Time.
-item({_,Item}) ->
+loc(#item{loc=Loc}) ->
+  Loc.
+item(#item{item=Item}) ->
   Item.
-sol_type({_,Type,_}) ->
-  Type.
-sol_args({_,_,Args}) ->
-  Args.
-
-pid(Tuple) when element(1,Tuple) == trace_ts ->
-  element(2,Tuple).
+value(#binary{value=Value}) ->
+  Value.
 
 subst_with_register(B) when is_binary(B),  byte_size(B)>0 ->
   case get_binary(B) of
@@ -855,7 +977,7 @@ print_binary_register() ->
     (fun ({Binary,Register}) ->
          Name = name(Register),
          Source = source(Register),
-         Time = time(Source),
+         Time = loc(Source),
          Type = binary_type(Register),
          case Type of
            produced ->
@@ -879,7 +1001,10 @@ print_binary_register() ->
          end
      end, 
      lists:sort
-       (fun ({_,R1},{_,R2}) -> time(source(R1)) < time(source(R2)) end,
+       (fun ({_,R1},{_,R2}) -> 
+            io:format("R1=~p~nR2=~p~n",[R1,R2]),
+            loc(source(R1)) < loc(source(R2)) 
+        end,
         registers())).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -895,14 +1020,6 @@ rewriteTo(Binary,Binaries) ->
       pad(),
       xor_const()
      ]).
-
-%%      pad_with(16#5c),
-%%      pad_with(16#36),
-%%      pad_with(16#0),
-%%      pad_one(),
-%%      xor_with_pad(16#5c),
-%%      xor_with_pad(16#36)
-%%     ]).
 
 rewriteTo(Binary,Binaries,Operators) ->
   Solutions = 
@@ -1026,7 +1143,7 @@ occurs_check(Binary,Candidate) ->
       case (CandidateRegister =/= undefined) 
         andalso binary_type(CandidateRegister)==rewrite of
         true ->
-          DefinedUsingBinaries = sol_args(item(source(CandidateRegister))),
+          DefinedUsingBinaries = element(3,value(CandidateRegister)),
           lists:all
             (fun (UsedBinary) -> 
                  occurs_check(Binary,UsedBinary) end, 
