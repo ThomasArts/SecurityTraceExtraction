@@ -198,7 +198,15 @@ analyze_trace_file(FileName) ->
   io:format
     ("~n~nThe first send is~n~p~n",
      [FirstSend]),
-  {FirstSend,Binaries}.
+
+  io:format("Before connection analysis~n"),
+  {Results,{Binaries,_}} = gen_tcp_sends(DetTraces, NonFunctions),
+
+%%  {FirstSend,Binaries}.
+  case lists:nth(length(Results),Results) of
+    [_,{signal_binary_ops,prefix_len,[LastResult]}] ->
+      {LastResult, Binaries}
+  end.
 
 get_key(KeyFileName,KeyDir,Type) ->
   FilePath = KeyDir++"/"++KeyFileName++if Type==priv -> ""; Type==pub -> ".pub" end,
@@ -587,12 +595,37 @@ call_limits(Pid,I,Traces) ->
 
 %% signal_extract:analyze_trace_file("enoise.trace").
 
+gen_tcp_sends(Traces,NF) ->
+  lists:foldl
+    (fun ({Pid,Trace},{Terms,{Bs,Cnt}}) ->
+         {NTerms,Arg} = gen_tcp_send_collect(Trace,NF,Bs,Cnt),
+         {NTerms++Terms,Arg}
+     end, {[], {[],0}}, Traces).
+
 sends(Traces,NF) ->
   lists:foldl
     (fun ({Pid,Trace},{Terms,{Bs,Cnt}}) ->
          {NTerms,Arg} = send_collect(Trace,NF,Bs,Cnt),
          {NTerms++Terms,Arg}
      end, {[], {[],0}}, Traces).
+
+gen_tcp_send_collect(Trace,NF,BsP,CntP) ->
+  collect_at_event
+    (fun (_Time,Event) -> 
+         case Event of
+           {trace_ts,_,call,{gen_tcp,send,_},_} -> true;
+           _ -> false
+         end
+     end, 
+     Trace,
+     fun (Call,Time,{Bs,Cnt},_,_) ->
+         io:format("~nwill expand ~p~n",[Call]),
+         {ExpandedCall={_M,_F,Args},NewBinaries,NewCounter} = 
+           expand_term(Call,Bs,Cnt,NF),
+         io:format("~nsent ~p~n",[Args]),
+         {Args,{NewBinaries,NewCounter}}
+     end,
+     {BsP,CntP}).
 
 send_collect(Trace,NF,BsP,CntP) ->
   collect_at_event
@@ -1035,7 +1068,8 @@ rewriteTo(Binary,Binaries) ->
       truncate(),
       extract(),
       pad(),
-      xor_const()
+      xor_const(),
+      prefix_len()
      ]).
 
 rewriteTo(Binary,Binaries,Operators) ->
@@ -1192,6 +1226,24 @@ merge(OrigBinary,Binary,[{First,_Register}|Rest],Binaries,Match) ->
     false -> 
       merge(OrigBinary,Binary,Rest,Binaries,Match)
   end.
+
+%% Add the length of a binary as a prefix
+%%
+prefix_len() ->
+  unary_rewrite
+    (fun (Binary,Candidate) ->
+         if
+           byte_size(Candidate)+2==byte_size(Binary) ->
+             CandidateWithLen = 
+               <<(byte_size(Candidate)):16, Candidate/binary>>,
+             if
+               Binary==CandidateWithLen ->
+                 {signal_binary_ops,prefix_len,[Candidate]};
+               true -> false
+             end;
+           true -> false 
+         end
+     end).
 
 %% truncate a binary
 %%

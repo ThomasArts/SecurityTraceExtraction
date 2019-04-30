@@ -1,6 +1,7 @@
 -module(noise).
 
 -export([test/0]).
+-export([handshake_and_send_test/0]).
 -export(['MERGE'/2]).
 
 %%-define(debug,true).
@@ -668,6 +669,44 @@ do_subst(Term,[First|Rest]) ->
     Term -> do_subst(Term,Rest);
     OtherTerm -> OtherTerm
   end.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+handshake_and_send(Prologue,HandshakeType,DHType,CryptoType,HashType,Message) ->
+  Initiator = true,
+  Handshake = find_handshake(HandshakeType),
+  {ok,DHParms} = find_dh_parms(DHType),
+  {ok,CryptoParms} = find_crypto_parms(CryptoType),
+  {ok,HashParms} = find_hash_parms(HashType),
+  ProtocolParms = [{'PROTOCOL-NAME',protocol_name(HandshakeType, DHType, CryptoType, HashType)}],
+  io:format
+    ("Protocol name is ~p~n",
+     [proplists:get_value('PROTOCOL-NAME',ProtocolParms)]),
+  Parms = DHParms ++ CryptoParms ++ HashParms ++ ProtocolParms,
+
+  {Results,{CS1,CS2},State} =
+    execute_handshake
+      ('PROTOCOL-NAME'(),
+       Initiator,
+       Prologue,
+       {s,undefined,undefined,undefined},
+       Handshake),
+
+  Result = encryptWithAd(<<>>,Message,CS1),
+  SubstResult = subst(Result,make_subst_list(Parms)),
+  SubstResult.
+  
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+handshake_and_send_test() ->
+  Prologue = <<0,8,0,0,3>>,
+
+  HandshakeType = "XK",
+  DHType = "25519",
+  CryptoType = "ChaChaPoly",
+  HashType = "BLAKE2b",
+  
+  handshake_and_send(Prologue,HandshakeType,DHType,CryptoType,HashType,"Hola").
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 

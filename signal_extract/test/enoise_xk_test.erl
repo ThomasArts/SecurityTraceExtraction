@@ -11,9 +11,9 @@
 client_test() ->
   KeyDir = code:priv_dir(signal_extract)++"/testing_keys",
   TestProtocol = enoise_protocol:from_name("Noise_XK_25519_ChaChaPoly_BLAKE2b"),
-  ClientPrivKey = get_key("client_key_25519",KeyDir,priv),
-  ClientPubKey  = get_key("client_key_25519",KeyDir,pub),
-  ServerPubKey  = get_key("server_key_25519",KeyDir,pub),
+  ClientPrivKey = get_key:get_key("client_key_25519",KeyDir,priv),
+  ClientPubKey  = get_key:get_key("client_key_25519",KeyDir,pub),
+  ServerPubKey  = get_key:get_key("server_key_25519",KeyDir,pub),
   Prologue = <<0,8,0,0,3>>,
 
   {ok, TcpSock} = 
@@ -33,17 +33,6 @@ client_test() ->
   after 1000 -> error(timeout) end,
   enoise:close(EConn).
 
-get_key(KeyFileName,KeyDir,Type) ->
-  FilePath = KeyDir++"/"++KeyFileName++if Type==priv -> ""; Type==pub -> ".pub" end,
-  case file:read_file(FilePath) of
-    {ok,Base64Bin} when Type==pub -> 
-      base64:decode(Base64Bin);
-    {ok,Bin} when Type==priv -> 
-      Bin;
-    _ ->
-      io:format("~n*** Error: could not read key file ~s~n",[FilePath]),
-      error(bad)
-  end.
 
   
 

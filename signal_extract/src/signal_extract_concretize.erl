@@ -83,8 +83,10 @@ difference(A, B, Subs) ->
 %% 
 
 read() ->
+%%  {TraceTerm, Binaries} = signal_extract:analyze_trace_file("enoise.trace"),
+%%  {wrote, ST} = noise:test(),
   {TraceTerm, Binaries} = signal_extract:analyze_trace_file("enoise.trace"),
-  {wrote, ST} = noise:test(),
+  ST = noise:handshake_and_send_test(),
   SemanticTerm =
     case ST of
       _ when is_list(ST) ->
