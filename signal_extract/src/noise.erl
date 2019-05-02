@@ -1,7 +1,7 @@
 -module(noise).
 
 -export([test/0]).
--export(['MERGE'/2]).
+%% -export(['MERGE'/2]).
 
 %%-define(debug,true).
 -ifdef(debug).
@@ -85,6 +85,7 @@
 'XOR'(B1,B2) ->
   {?FUNCTION_NAME,[B1,B2]}.
 
+%% MERGE is || in the Noise sepcification
 'HMAC-HASH'(Key,Text) ->
   Key1 = 'PAD_TO_USING'(Key,'BLOCKLEN'(),0),
   OPad = 'PAD_TO_USING'(<<>>,'BLOCKLEN'(),16#5c),

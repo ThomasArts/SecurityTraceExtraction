@@ -10,6 +10,8 @@
 
 -compile([export_all, nowarn_export_all]).
 
+'WriteMessage'(X) ->
+    {signal_binary_ops, merge, X}.
 'MERGE'(Bin1, Bin2) ->
   if
     is_binary(Bin2), byte_size(Bin2)==1 ->

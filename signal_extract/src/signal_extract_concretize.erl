@@ -15,15 +15,17 @@ start(Concretizer) ->
     {SemanticTerm, TraceTerm, Binaries} = read(),
     Concrete = concretize(SemanticTerm, Concretizer),
     io:format("****************************************************\n"),
-  difference(Concrete, TraceTerm, []).
+    difference(Concrete, TraceTerm, []).
 
 concretize(List, Concretizer) when is_list(List) ->
     [ concretize(E, Concretizer) || E <- List ];
 concretize({Fun, Args}, Concretizer) ->
     ConcreteArgs = concretize(Args, Concretizer),
     try apply(Concretizer, Fun, ConcreteArgs)
-    catch _:_ ->
-            {Fun, ConcreteArgs}
+    catch _:Error ->
+            io:format("~p(~p) --> ~p\n", [Fun, ConcreteArgs, Error]),
+            %% If function fails, we might have the wrong concrete arguments
+            {Fun, Args}
     end;
 concretize(X, _) ->
     X.
@@ -83,24 +85,6 @@ difference(A, B, Subs) ->
 %% 
 
 read() ->
-  {TraceTerm, Binaries} = signal_extract:analyze_trace_file("enoise.trace"),
-  {wrote, ST} = noise:test(),
-  SemanticTerm =
-    case ST of
-      _ when is_list(ST) ->
-        %% nicer to reverse the list and foldl over the tl with hd as
-        %% first Acc (or simply define a recursive function that is
-        %% immediately obvious
-        lists:foldr
-          (fun (Write, Acc) ->
-               if
-                 Acc == undefined ->
-                   Write;
-                 true ->
-                   noise:'MERGE'(Write, Acc)
-               end
-           end, undefined, ST);
-      Term ->
-        Term
-    end,
-    {SemanticTerm, TraceTerm, Binaries}.
+    {TraceTerm, Binaries} = signal_extract:analyze_trace_file("enoise.trace"),
+    {wrote, ST} = noise:test(),
+    { {'WriteMessage', [ST]}, TraceTerm, Binaries}.
