@@ -8,11 +8,10 @@
 
 -compile([export_all]).
 
-start() ->
-    start(concrete_noise).
+start(SemanticTerm,TraceTerm) ->
+    start(concrete_noise,SemanticTerm,TraceTerm).
 
-start(Concretizer) ->
-    {SemanticTerm, TraceTerm, Binaries} = read(),
+start(Concretizer,SemanticTerm,TraceTerm) ->
     Concrete = concretize(SemanticTerm, Concretizer),
     io:format("****************************************************\n"),
   difference(Concrete, TraceTerm, []).
@@ -28,8 +27,24 @@ concretize({Fun, Args}, Concretizer) ->
 concretize(X, _) ->
     X.
 
+head_normalize(T) ->
+  case T of
+    {signal_binary_ops,merge,[<<>>,<<>>]} ->
+      <<>>;
+    {signal_binary_ops,merge,[TL,<<>>]} ->
+      TL;
+    {signal_binary_ops,merge,[<<>>,TR]} ->
+      TR;
+    _ ->
+      T
+  end.
 
-difference({F, M, As}, {F, M, Bs}, Subs) when length(As) == length(Bs) ->
+difference(T1,T2,Subst) ->
+  T1N = head_normalize(T1),
+  T2N = head_normalize(T2),
+  diff(T1N,T2,Subst).
+
+diff({F, M, As}, {F, M, Bs}, Subs) when length(As) == length(Bs) ->
   {Results, NewSubs} = 
     lists:foldl
       (fun ({A,B},{Rs,S}) -> {R,NewS} = difference(A,B,S), {[R|Rs],NewS} end, {[],Subs},
@@ -40,9 +55,9 @@ difference({F, M, As}, {F, M, Bs}, Subs) when length(As) == length(Bs) ->
     false ->
       {{F, M, Results}, NewSubs}
     end;
-difference(A, A, Subst) ->
+diff(A, A, Subst) ->
     {eq, Subst};
-difference(A, {F, M, Args} = B, Subs) when A =/= B ->
+diff(A, {F, M, Args} = B, Subs) when A =/= B ->
     Same =
         try apply(F, M, Args) == A
         catch _:_ -> false
@@ -54,7 +69,7 @@ difference(A, {F, M, Args} = B, Subs) when A =/= B ->
           false -> {{A, '/=', B}, [{A,B}|Subs]}
         end
     end;
-difference(A, B, Subs) ->
+diff(A, B, Subs) ->
   case lists:member({A,B},Subs) of
     true -> {eq, Subs};
     false -> {{A, '/=', B}, [{A,B}|Subs]}
@@ -85,24 +100,26 @@ difference(A, B, Subs) ->
 read() ->
 %%  {TraceTerm, Binaries} = signal_extract:analyze_trace_file("enoise.trace"),
 %%  {wrote, ST} = noise:test(),
-  {TraceTerm, Binaries} = signal_extract:analyze_trace_file("enoise.trace"),
-  ST = noise:handshake_and_send_test(),
-  SemanticTerm =
-    case ST of
-      _ when is_list(ST) ->
-        %% nicer to reverse the list and foldl over the tl with hd as
-        %% first Acc (or simply define a recursive function that is
-        %% immediately obvious
-        lists:foldr
-          (fun (Write, Acc) ->
-               if
-                 Acc == undefined ->
-                   Write;
-                 true ->
-                   noise:'MERGE'(Write, Acc)
-               end
-           end, undefined, ST);
-      Term ->
-        Term
-    end,
-    {SemanticTerm, TraceTerm, Binaries}.
+  {TraceTerm, PayloadTerm} = signal_extract:analyze_trace_file("enoise.trace"),
+  {STs,STp} = noise:handshake_and_send_test(),
+  {
+    {TraceTerm, list_to_merge(STs)},
+    {PayloadTerm, list_to_merge(STp)}
+  }.
+      
+list_to_merge(L) when is_list(L) ->
+  %% nicer to reverse the list and foldl over the tl with hd as
+  %% first Acc (or simply define a recursive function that is
+  %% immediately obvious
+  lists:foldr
+    (fun (Write, Acc) ->
+         if
+           Acc == undefined ->
+             Write;
+           true ->
+             noise:'MERGE'(Write, Acc)
+         end
+     end, undefined, L);
+list_to_merge(Term) ->
+  Term.
+  

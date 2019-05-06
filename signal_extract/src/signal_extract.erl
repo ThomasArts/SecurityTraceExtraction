@@ -51,7 +51,9 @@ do_trace(TracedPid,ToPid,Modules) ->
                [
                 %%call,arity,return_to,
                 call,
-                set_on_spawn,'receive',send,
+                set_on_spawn,
+                %%'receive',
+                send,
                 %% procs,ports, -- better not
                 return_to,
                 %% set_on_link,
@@ -193,19 +195,29 @@ analyze_trace_file(FileName) ->
 
   io:format("Before send analysis~n"),
 
-  {Sends,{Binaries,_}} = sends(DetTraces, NonFunctions),
+  {Sends,{_Binaries,_}} = sends(DetTraces, NonFunctions),
   [_Port,FirstSend] = lists:nth(1,Sends),
   io:format
     ("~n~nThe first send is~n~p~n",
      [FirstSend]),
 
   io:format("Before connection analysis~n"),
-  {Results,{Binaries,_}} = gen_tcp_sends(DetTraces, NonFunctions),
+  {Results,{Binaries,Counter}} = gen_tcp_sends(DetTraces, NonFunctions),
 
-%%  {FirstSend,Binaries}.
-  case lists:nth(length(Results),Results) of
+  io:format("read_messages~n"),
+  {[PayloadTerm],_} = read_messages(DetTraces, NonFunctions, Binaries, Counter),
+
+  lists:foreach
+    (fun ({Pid,Sends}) ->
+         io:format("Pid ~p has ~p sends~n",[Pid,length(Sends)])
+     end,
+     Results),
+
+  {_,FromLastPid} = lists:nth(length(Results),Results),
+  LastResultFromLastPid = lists:nth(length(FromLastPid),FromLastPid),
+  case LastResultFromLastPid of
     [_,{signal_binary_ops,prefix_len,[LastResult]}] ->
-      {LastResult, Binaries}
+      {LastResult, PayloadTerm}
   end.
 
 get_key(KeyFileName,KeyDir,Type) ->
@@ -596,18 +608,43 @@ call_limits(Pid,I,Traces) ->
 %% signal_extract:analyze_trace_file("enoise.trace").
 
 gen_tcp_sends(Traces,NF) ->
-  lists:foldl
+  lists:foldr
     (fun ({Pid,Trace},{Terms,{Bs,Cnt}}) ->
          {NTerms,Arg} = gen_tcp_send_collect(Trace,NF,Bs,Cnt),
-         {NTerms++Terms,Arg}
+         {[{Pid,NTerms}|Terms],Arg}
      end, {[], {[],0}}, Traces).
 
+read_messages(Traces,NF,Bs,Cnt) ->
+  lists:foldr
+    (fun ({Pid,Trace},{Terms,{Bs,Cnt}}) ->
+         {NTerms,Arg} = read_messages_collect(Trace,NF,Bs,Cnt),
+         {NTerms++Terms,Arg}
+     end, {[], {Bs,Cnt}}, Traces).
+
+
 sends(Traces,NF) ->
-  lists:foldl
+  lists:foldr
     (fun ({Pid,Trace},{Terms,{Bs,Cnt}}) ->
          {NTerms,Arg} = send_collect(Trace,NF,Bs,Cnt),
          {NTerms++Terms,Arg}
      end, {[], {[],0}}, Traces).
+
+read_messages_collect(Trace,NF,BsP,CntP) ->
+  collect_at_event
+    (fun (_Time,Event) -> 
+         case Event of
+           {trace_ts,_,return_from,{enoise_hs_state,read_message,2},_,_} -> true;
+           _ -> false
+         end
+     end, 
+     Trace,
+     fun ({ok,_,Payload},Time,{Bs,Cnt},_,_) ->
+         io:format("~nwill expand ~p~n",[Payload]),
+         {PayloadTerm,NewBinaries,NewCounter} = expand_term(Payload,Bs,Cnt,NF),
+         io:format("~npayload ~p~n",[PayloadTerm]),
+         {PayloadTerm,{NewBinaries,NewCounter}}
+     end,
+     {BsP,CntP}).
 
 gen_tcp_send_collect(Trace,NF,BsP,CntP) ->
   collect_at_event
@@ -698,6 +735,7 @@ expand_term(T,Binaries,Counter,NF) ->
                 [{T,NewRewrittenMFA}|NewBinaries], 
                 NewCounter+1
               };
+
             false -> 
               {
               {M,F,RewrittenArgs},
@@ -1040,6 +1078,14 @@ print_binary_register() ->
                  subst_with_register(item(Source)),
                  subst_with_register(item(Return)),
                  Binary]);
+           rewrite ->
+             io:format
+               ("~n~p : ~p@~p -- ~p == ~n  ~w~n",
+                [Name,
+                 Type,
+                 Time,
+                 subst_with_register(value(Register)),
+                 Binary]);
            _ ->
              io:format
                ("~n~p : ~p@~p -- ~p == ~n  ~w~n",
@@ -1318,5 +1364,5 @@ xor_const() ->
          end
      end).
 
-%% {T,S} = signal_extract_concretize:start(), io:format("~n~nComparison:~n~p~nSubstitution:~n~p~n",[T,S]).
+%% {{Ts,Ss},{Tp,Sp}} = signal_extract_concretize:read(), {Diffs,Subs} = signal_extract_concretize:start(Ss,Ts), io:format("~n~nComparison output:~n~p~nSubstitution:~n~p~n",[Diffs,Subs]), lists:foreach(fun ({T1,T2}) -> io:format("~n Subst: ~p~nand ~p~n",[T1,T2]) end, Subs), {Diffp,Subp} = signal_extract_concretize:start(Sp,Tp), io:format("~n~nComparison payload:~n~p~nSubstitution:~n~p~n",[Diffp,Subp]), lists:foreach(fun ({T1,T2}) -> io:format("~n Subst: ~p~nand ~p~n",[T1,T2]) end, Subp).
 %% 

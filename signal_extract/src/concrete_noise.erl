@@ -28,6 +28,9 @@
 'GENERATE_KEYPAIR'(X) ->
   {maps, get, [secret, {enacl, crypto_sign_ed25519_keypair, [X]}]}.
 
+'DECRYPT'(X, Nonce, Ad, Payload) ->
+  {enacl, aead_chacha20poly1305_decrypt, [X, Nonce, Ad, Payload]}.
+
 'ENCRYPT'(X, Nonce, Y, Payload) ->
   {enacl, aead_chacha20poly1305_encrypt, [X, Nonce, Y, Payload]}.
 
