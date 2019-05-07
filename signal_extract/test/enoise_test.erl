@@ -19,7 +19,6 @@ client_test(Handshake,DH,Crypto,Hash,KnowsRS) ->
   io:format("Prologue is ~p~n",[Prologue]),
   ClientPrivKey = get_key:get_key("client_key_25519",KeyDir,priv),
   ClientPubKey  = get_key:get_key("client_key_25519",KeyDir,pub),
-  ServerPubKey  = get_key:get_key("server_key_25519",KeyDir,pub),
 
   {ok, TcpSock} = 
     gen_tcp:connect("localhost", 7002, [{active, once}, binary, {reuseaddr, true}], 1000),
@@ -34,8 +33,11 @@ client_test(Handshake,DH,Crypto,Hash,KnowsRS) ->
     , {timeout, 1000}
     ] ++
     if
-      KnowsRS -> [{rs, enoise_keypair:new(dh25519, ServerPubKey)}];
-      true -> []
+      KnowsRS -> 
+        ServerPubKey  = get_key:get_key("server_key_25519",KeyDir,pub),
+        [{rs, enoise_keypair:new(dh25519, ServerPubKey)}];
+      true -> 
+        []
     end,
   {ok, EConn, _UselessState} = enoise:connect(TcpSock, Opts),
   ok = enoise:send(EConn, <<"ok\n">>),
