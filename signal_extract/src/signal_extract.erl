@@ -1,8 +1,10 @@
 -module(signal_extract).
 
--export([noisy_trace/0,register_binaries/3,trace_make_call_deterministic/1]).
+-export([noisy_trace/0,noisy_trace/5]).
+-export([register_binaries/3,trace_make_call_deterministic/1]).
 -export([get_traces/1,compose_binaries/1,print_array/2]).
 -export([print_binary_register/0,show_trace/1,show_registered_trace/1]).
+-export([test/0]).
 
 -compile(export_all).
 
@@ -23,9 +25,9 @@
 %% rebar3 as test shell
 
 noisy_trace() ->
-  noisy_trace("enoise.trace").
+  noisy_trace("XK","25519","ChaChaPoly","BLAKE2b","enoise.trace").
 
-noisy_trace(TraceFileName) ->
+noisy_trace(Handshake,DH,Crypto,Hash,TraceFileName) ->
   EnoiseModules = 
     [
      enoise, 
@@ -36,12 +38,14 @@ noisy_trace(TraceFileName) ->
   LoadModules =
     [
      enacl, enacl_nif, unicode_util, gen_tcp, inet_tcp, signal_extract_utils, gen, gen_server,
-     enoise_crypto_basics, signal_extract_utils, enoise_xk_test, code, file, base64, io
+     enoise_crypto_basics, signal_extract_utils, enoise_test, code, file, base64, io
     ],
   lists:foreach(fun code:ensure_loaded/1, EnoiseModules++LoadModules),
   test
     (
-    fun () -> enoise_xk_test:client_test() end, 
+    fun () -> 
+        enoise_test:client_test(Handshake,DH,Crypto,Hash) 
+    end, 
     EnoiseModules,
     TraceFileName
    ).
@@ -90,7 +94,12 @@ test(F, Modules, TraceFileName) ->
 
 compute(F,ReportTo) ->
   receive start -> ok end,
-  ReturnValue = F(),
+  ReturnValue = 
+    try F() 
+    catch Class:Reason -> 
+        io:format("Exception ~p:~p raised. Stacktrace:~n~p~n",[Class,Reason,erlang:get_stacktrace()]),
+        {'EXIT',Reason} 
+    end,
   ReportTo ! {self(), stopped, ReturnValue}.
 
 tracer(Pid) ->
@@ -136,24 +145,15 @@ analyze_trace_file(FileName) ->
 
   %% Later we should generalise this...
   Traces = get_traces(FileName),
-  KeyDir = code:priv_dir(signal_extract)++"/testing_keys",
-  ClientPrivKey = get_key("client_key_25519",KeyDir,priv),
-  ClientPubKey  = get_key("client_key_25519",KeyDir,pub),
-  ServerPubKey  = get_key("server_key_25519",KeyDir,pub),
-  Prologue = <<0,8,0,0,3>>,
   
   PredefinedBinaries = 
     [
-%%     {Prologue,'Prologue'},
-%%     {ClientPrivKey,'ClientPriv'},
-%%     {ClientPubKey,'ClientPub'},
-%%     {ServerPubKey,'ServerPub'},
-%%     {erlang:list_to_binary(["Noise","_","XK","_","25519","_","ChaChaPoly","_","BLAKE2b"]),'NoiseProt'}
     ],
 
   NonFunctions =
     [
-     {enacl, crypto_sign_ed25519_keypair, 0}
+     {enacl, crypto_sign_ed25519_keypair, 0},
+     {enoise, gen_tcp_rcv_msg, 2}
     ],
 
   io:format("~n~nDeterminizing trace...~n"),
@@ -194,42 +194,29 @@ analyze_trace_file(FileName) ->
 %%            [graphviz_traceback("trace2.dot",Traceback,2,PredefinedBinaries)]),
 
   io:format("Before send analysis~n"),
-
   {Sends,{_Binaries,_}} = sends(DetTraces, NonFunctions),
   [_Port,FirstSend] = lists:nth(1,Sends),
-  io:format
-    ("~n~nThe first send is~n~p~n",
-     [FirstSend]),
+    io:format
+      ("~n~nThe first send is~n~p~n",
+       [FirstSend]),
 
-  io:format("Before connection analysis~n"),
+  io:format("Before checking post-protocol send~n"),
   {Results,{Binaries,Counter}} = gen_tcp_sends(DetTraces, NonFunctions),
-
-  io:format("read_messages~n"),
-  {[PayloadTerm],_} = read_messages(DetTraces, NonFunctions, Binaries, Counter),
-
   lists:foreach
     (fun ({Pid,Sends}) ->
          io:format("Pid ~p has ~p sends~n",[Pid,length(Sends)])
      end,
      Results),
 
+  io:format("Before checking payload_messages~n"),
+  {ReadResults,_} = read_messages(DetTraces, NonFunctions, Binaries, Counter),
+  LastPayloadTerm = lists:last(ReadResults),
+
   {_,FromLastPid} = lists:nth(length(Results),Results),
   LastResultFromLastPid = lists:nth(length(FromLastPid),FromLastPid),
   case LastResultFromLastPid of
-    [_,{signal_binary_ops,prefix_len,[LastResult]}] ->
-      {LastResult, PayloadTerm}
-  end.
-
-get_key(KeyFileName,KeyDir,Type) ->
-  FilePath = KeyDir++"/"++KeyFileName++if Type==priv -> ""; Type==pub -> ".pub" end,
-  case file:read_file(FilePath) of
-    {ok,Base64Bin} when Type==pub -> 
-      base64:decode(Base64Bin);
-    {ok,Bin} when Type==priv -> 
-      Bin;
-    _ ->
-      io:format("~n*** Error: could not read key file ~s~n",[FilePath]),
-      error(bad)
+    [_,{signal_binary_ops,prefix_len,[LastSend]}] ->
+      {LastSend, LastPayloadTerm}
   end.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -1364,5 +1351,15 @@ xor_const() ->
          end
      end).
 
-%% {{Ts,Ss},{Tp,Sp}} = signal_extract_concretize:read(), {Diffs,Subs} = signal_extract_concretize:start(Ss,Ts), io:format("~n~nComparison output:~n~p~nSubstitution:~n~p~n",[Diffs,Subs]), lists:foreach(fun ({T1,T2}) -> io:format("~n Subst: ~p~nand ~p~n",[T1,T2]) end, Subs), {Diffp,Subp} = signal_extract_concretize:start(Sp,Tp), io:format("~n~nComparison payload:~n~p~nSubstitution:~n~p~n",[Diffp,Subp]), lists:foreach(fun ({T1,T2}) -> io:format("~n Subst: ~p~nand ~p~n",[T1,T2]) end, Subp).
-%% 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+test() ->
+  {{Ts,Ss},{Tp,Sp}} = signal_extract_concretize:read(), 
+  {Diffs,Subs} = signal_extract_concretize:start(Ss,Ts), 
+  io:format("~n~nComparison output:~n~p~nSubstitution:~n~p~n",[Diffs,Subs]), 
+  lists:foreach(fun ({T1,T2}) -> io:format("~n Subst: ~p~nand ~p~n",[T1,T2]) end, Subs), 
+  {Diffp,Subp} = signal_extract_concretize:start(Sp,Tp), 
+  io:format("~n~nComparison payload:~n~p~nSubstitution:~n~p~n",[Diffp,Subp]), 
+  lists:foreach(fun ({T1,T2}) -> io:format("~n Subst: ~p~nand ~p~n",[T1,T2]) end, Subp).
+
+%% signal_extract:noisy_trace("XN","25519","ChaChaPoly","BLAKE2b","enoise.trace").

@@ -58,7 +58,6 @@
   end.
 
 'PAD_TO_USING'(Bin, Upto, Using) ->
-  io:format("PAD is ~p~n",[Bin]),
   case bin_size(Bin) of
     BinSize when is_integer(BinSize) ->
 %%      case Bin of
@@ -74,7 +73,6 @@
       {signal_binary_ops,pad,[Bin,Using,Upto-BinSize]};
 %%      end;
     undefined ->
-      io:format("Bin is ~p~n",[Bin]),
       {'PAD_TO_USING',[Bin,Upto,Using]}
   end.
 
