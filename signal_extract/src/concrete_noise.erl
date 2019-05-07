@@ -19,8 +19,19 @@
   end.
 
 'PUBLIC-KEY'(X) ->
-  {enacl, crypto_sign_ed25519_public_to_curve25519, 
-   [{signal_binary_ops, extract, [X, 32, 32]}]}.
+  case X of
+    {'STORE-PUBLIC-KEY', [Key]}-> 
+      Key;
+    {'STORE-KEYPAIR', [KeyPair]} ->
+      {enacl, crypto_sign_ed25519_public_to_curve25519, 
+       [{signal_binary_ops, extract, [KeyPair, 32, 32]}]};
+%%    {maps,get,[secret,KeyPair={enacl,crypto_sign_ed25519_keypair,[Id]}]} ->
+%%      {enacl, crypto_sign_ed25519_public_to_curve25519, 
+%%       [{signal_binary_ops, extract, [KeyPair, 32, 32]}]};
+    _ ->
+      io:format("public_key(~p)~n",[X]),
+      throw(nyi)
+  end.
 
 'PRIVATE-KEY'(X) ->
   {enacl, crypto_sign_ed25519_secret_to_curve25519, [X]}.

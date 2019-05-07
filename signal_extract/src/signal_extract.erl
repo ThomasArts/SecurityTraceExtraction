@@ -600,7 +600,7 @@ gen_tcp_sends(Traces,NF) ->
     (fun ({Pid,Trace},{Terms,{Bs,Cnt}}) ->
          {NTerms,Arg} = gen_tcp_send_collect(Trace,NF,Bs,Cnt),
          {[{Pid,NTerms}|Terms],Arg}
-     end, {[], {[],0}}, Traces).
+     end, {[], {[],[]}}, Traces).
 
 read_messages(Traces,NF,Bs,Cnt) ->
   lists:foldr
@@ -615,7 +615,7 @@ sends(Traces,NF) ->
     (fun ({Pid,Trace},{Terms,{Bs,Cnt}}) ->
          {NTerms,Arg} = send_collect(Trace,NF,Bs,Cnt),
          {NTerms++Terms,Arg}
-     end, {[], {[],0}}, Traces).
+     end, {[], {[],[]}}, Traces).
 
 read_messages_collect(Trace,NF,BsP,CntP) ->
   collect_at_event
@@ -717,11 +717,12 @@ expand_term(T,Binaries,Counter,NF) ->
           MFArity = {M,F,length(Args)},
           case lists:member(MFArity,NF) of
             true -> 
-              NewRewrittenMFA = {M,F,RewrittenArgs++[Counter]},
+              {CounterArg,NewerCounter} = get_mfa_counter(MFArity,NewCounter),
+              NewRewrittenMFA = {M,F,RewrittenArgs++[CounterArg]},
               {
                 NewRewrittenMFA,
                 [{T,NewRewrittenMFA}|NewBinaries], 
-                NewCounter+1
+                NewerCounter
               };
 
             false -> 
@@ -768,6 +769,14 @@ expand_term(T,Binaries,Counter,NF) ->
         _ ->
           {T,Binaries,Counter}
       end
+  end.
+
+get_mfa_counter(MFA,Counters) ->
+  case lists:keyfind(MFA,1,Counters) of
+    false ->
+      {0,[{MFA,1}|Counters]};
+    {_,Counter} ->
+      {Counter,lists:keyreplace(MFA,1,Counters,{MFA,Counter+1})}
   end.
 
 expand_terms([],Binaries,Counter,_NF) ->

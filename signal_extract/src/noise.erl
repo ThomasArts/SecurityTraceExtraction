@@ -1,7 +1,7 @@
 -module(noise).
 
 -export([execute_handshake/5]).
--export(['MERGE'/2,'PROTOCOL-NAME'/0,'LOCAL_STATIC'/0]).
+-export(['MERGE'/2,'PROTOCOL-NAME'/0,'LOCAL_STATIC'/0,'STORE-KEYPAIR'/1]).
 -export([encryptWithAd/3]).
 
 %%-define(debug,true).
@@ -118,6 +118,12 @@
 
 'PROTOCOL-NAME'() ->
   {?FUNCTION_NAME,[]}.
+
+'STORE-PUBLIC-KEY'(PublicKey) ->
+  {?FUNCTION_NAME,[PublicKey]}.
+
+'STORE-KEYPAIR'(KeyPair) ->
+  {?FUNCTION_NAME,[KeyPair]}.
 
 'PRIVATE-KEY'(KeyName) ->
   {?FUNCTION_NAME,[KeyName]}.
@@ -315,10 +321,10 @@ initialize(ProtocolName,Handshake,Initiator,Prologue,S,E,RS,RE) ->
     lists:foldl
       (fun (Key,AccHandshakeState) ->
            if
-             Key==s -> AccHandshakeState#handshakeState{s='LOCAL_STATIC'()};
-             Key==e -> AccHandshakeState#handshakeState{e='LOCAL_EPHEMERAL'()};
-             Key==rs -> AccHandshakeState#handshakeState{rs='REMOTE_STATIC'()};
-             Key==re -> AccHandshakeState#handshakeState{re='REMOTE_EPHEMERAL'()}
+             Key==s -> AccHandshakeState#handshakeState{s='STORE-KEYPAIR'('LOCAL_STATIC'())};
+             Key==e -> AccHandshakeState#handshakeState{e='STORE-KEYPAIR'('LOCAL_EPHEMERAL'())};
+             Key==rs -> AccHandshakeState#handshakeState{rs='STORE-PUBLIC-KEY'('REMOTE_STATIC'())};
+             Key==re -> AccHandshakeState#handshakeState{re='STORE-PUBLIC-KEY'('REMOTE_EPHEMERAL'())}
            end
        end,
        HandshakeState6,PublicKeys),
@@ -335,8 +341,8 @@ writeMessage(Message,HS) ->
   IsInitiator = HS#handshakeState.initiator,
   case Message of
     e ->
-      {Key,HS0} = generateEmpheralKeyPair(HS),
-      HS1 = HS0#handshakeState{e=Key},
+      {KeyPair,HS0} = generateEmpheralKeyPair(HS),
+      HS1 = HS0#handshakeState{e='STORE-KEYPAIR'(KeyPair)},
       PubE = 'PUBLIC-KEY'(key_value(e,HS1)),
       HS2 = message_append(PubE,HS1),
       modify_symmetricState(fun (SS) -> mixHash(PubE,SS) end, HS2);
@@ -395,7 +401,7 @@ readMessage(Message,HS) ->
         HS#handshakeState.re == undefined ->
           HS0 = HS#handshakeState
             {
-              re = 'READ'('DHLEN'(),HS#handshakeState.input_buffer),
+              re = 'STORE-PUBLIC-KEY'('READ'('DHLEN'(),HS#handshakeState.input_buffer)),
               input_buffer = 'SKIP'('DHLEN'(),HS#handshakeState.input_buffer)
             },
           modify_symmetricState
@@ -413,7 +419,7 @@ readMessage(Message,HS) ->
               (fun (SS) -> decryptAndHash(Temp,SS) end, HS),
           HS0#handshakeState
             {
-            rs=DecryptedTerm,
+            rs='STORE-PUBLIC-KEY'(DecryptedTerm),
             input_buffer='SKIP'('DHLEN'(),HS#handshakeState.input_buffer)
            }
       end;

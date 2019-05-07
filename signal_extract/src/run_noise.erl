@@ -166,7 +166,7 @@ handshake_and_send(HandshakeType,DHType,CryptoType,HashType,Message) ->
       (noise:'PROTOCOL-NAME'(),
        Initiator,
        Prologue,
-       {noise:'LOCAL_STATIC'(),undefined,undefined,undefined},
+       {noise:'STORE-KEYPAIR'(noise:'LOCAL_STATIC'()),undefined,undefined,undefined},
        Handshake),
 
   {Result,_} = noise:encryptWithAd(<<>>,Message,CS1),
