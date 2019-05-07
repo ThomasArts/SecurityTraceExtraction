@@ -41,10 +41,11 @@ noisy_trace(Handshake,DH,Crypto,Hash,TraceFileName) ->
      enoise_crypto_basics, signal_extract_utils, enoise_test, code, file, base64, io
     ],
   lists:foreach(fun code:ensure_loaded/1, EnoiseModules++LoadModules),
+  KnowsRS = echo_noise:knows_rs(Handshake),
   test
     (
     fun () -> 
-        enoise_test:client_test(Handshake,DH,Crypto,Hash) 
+        enoise_test:client_test(Handshake,DH,Crypto,Hash,KnowsRS) 
     end, 
     EnoiseModules,
     TraceFileName

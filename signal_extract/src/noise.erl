@@ -1,8 +1,8 @@
 -module(noise).
 
--export([test/0]).
--export([handshake_and_send_test/0]).
--export(['MERGE'/2]).
+-export([execute_handshake/5]).
+-export(['MERGE'/2,'PROTOCOL-NAME'/0,'LOCAL_STATIC'/0]).
+-export([encryptWithAd/3]).
 
 %%-define(debug,true).
 -ifdef(debug).
@@ -150,6 +150,9 @@
   {?FUNCTION_NAME,[Loc]}.
 
 % ----------------------------------------------------------------------
+
+'PLUS'(Expr1,Expr2) ->
+  {?FUNCTION_NAME,[Expr1,Expr2]}.
 
 'IF'(Condition,Expr1,Expr2) ->
   {?FUNCTION_NAME,[Condition,Expr1,Expr2]}.
@@ -401,7 +404,7 @@ readMessage(Message,HS) ->
       end;
     s ->
       CS = (HS#handshakeState.symmetricState)#symmetricState.cipherState,
-      NumBytes = 'IF'(hasKey(CS),'DHLEN'()+16,'DHLEN'),
+      NumBytes = 'IF'(hasKey(CS),'PLUS'('DHLEN'(),16),'DHLEN'),
       Temp = 'READ'(NumBytes,HS#handshakeState.input_buffer),
       if
         HS#handshakeState.rs == undefined ->
@@ -459,7 +462,7 @@ readMessages([Message|Messages],HandshakeState) ->
 
 execute_handshake(ProtocolName,Initiator,Prologue,{S,E,RS,RE},Handshake) ->
   State = #state{handshakeState=initialize(ProtocolName,Handshake,Initiator,Prologue,S,E,RS,RE)},
-  {_PreHandshake,CommHandshake} = split_handshake(Handshake),
+  {_PreHandshake,CommHandshake} = Handshake,
   execute_handshake(CommHandshake,State).
 
 execute_handshake([],State) ->
@@ -513,7 +516,7 @@ execute_message_pattern(MessagePattern,State) ->
 % ----------------------------------------------------------------------
 
 extractPublicKeysFromPreMessages(Initiator,HandshakePattern) ->  
-  {PreMessages,_} = split_handshake(HandshakePattern),
+  {PreMessages,_} = HandshakePattern,
   InitiatorKeys = extractPublicKeys(Initiator,PreMessages,snd),
   ResponderKeys = extractPublicKeys(Initiator,PreMessages,rcv),
   InitiatorKeys ++ ResponderKeys.
@@ -571,221 +574,5 @@ generateEmpheralKeyPair(HandshakeState) ->
     HandshakeState#handshakeState{key_counter=KeyCounter+1}
   }.
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-protocol_name(HandshakeName,DHType,CipherType,HashType) ->
-  list_to_binary("Noise_"++HandshakeName++"_"++DHType++"_"++CipherType++"_"++HashType).
-
-split_handshake(Handshake) ->
-  Handshake.
-
-find_handshake(HandshakeName) ->
-  if
-    HandshakeName == "XK" ->
-      {
-        [{rcv,[s]}],
-        [
-         {snd,[e,es]},
-         {rcv,[e,ee]},
-         {snd,[s,se]}
-        ]
-      }
-  end.
-
-find_dh_parms("25519") ->
-  {ok,[{'DHLEN',32}]}.
-
-find_crypto_parms("ChaChaPoly") ->
-  {ok,[]}.
-
-find_hash_parms("BLAKE2b") ->
-  {ok,[{'HASHLEN',64}, {'BLOCKLEN',128}]}.
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-zero_args(Functor,Value) ->          
-  fun (Term) ->
-      case Term of
-        {Functor,[]} -> Value;
-        _ -> Term
-      end
-  end.
-       
-'eq_fun'() ->
-  fun (Term) ->
-      case Term of
-        {'EQ',[I1,I2]} when is_integer(I1), is_integer(I2) ->
-          I1 == I2;
-        {'EQ',[B1,B2]} when is_binary(B1), is_binary(B2) ->
-          B1 == B2;
-        _ -> Term
-      end
-  end.
-
-'leq_fun'() ->
-  fun (Term) ->
-      case Term of
-        {'LEQ',[I1,I2]} when is_integer(I1), is_integer(I2) -> I1 =< I2;
-        _ -> Term
-      end
-  end.
-
-'if_fun'() ->
-  fun (Term) ->
-      case Term of
-        {'IF',[true,Expr1,_]} -> Expr1;
-        {'IF',[false,_,Expr2]} -> Expr2;
-        _ -> Term
-      end
-  end.
-
-'size_fun'() ->
-  fun (Term) ->
-      case Term of
-        {'SIZE',[B]} when is_binary(B) -> byte_size(B);
-        _ -> Term
-      end
-  end.
-
-make_subst_list(Defs) ->
-  [
-   'if_fun'(), 'eq_fun'(), 'leq_fun'(), 'size_fun'()
-   | lists:map(fun ({Atom,Value}) -> zero_args(Atom,Value) end, Defs)
-  ].
-
-subst({Atom,List},Substs) when is_atom(Atom), is_list(List) ->
-  SubstList = subst(List,Substs),
-  Term = {Atom,SubstList},
-  case do_subst(Term,Substs) of
-    Term -> 
-      Term;
-    OtherTerm -> 
-      subst(OtherTerm,Substs);
-    _ -> 
-      Term
-  end;
-subst(Tuple,Substs) when is_tuple(Tuple) ->
-  list_to_tuple(subst(tuple_to_list(Tuple),Substs));
-subst([Hd|Tl],Substs) ->
-  [subst(Hd,Substs)|subst(Tl,Substs)];
-subst(Map,Substs) when is_map(Map) ->
-  lists:foldl(fun ({Key,Value},M) ->
-                  maps:put(Key,Value,M)
-              end, #{}, subst(maps:to_list(Map),Substs));
-subst(T,_) ->
-  T.
-
-do_subst(Term,[]) ->
-  Term;
-do_subst(Term,[First|Rest]) ->
-  case First(Term) of
-    Term -> do_subst(Term,Rest);
-    OtherTerm -> OtherTerm
-  end.
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-handshake_and_send(Prologue,HandshakeType,DHType,CryptoType,HashType,Message) ->
-  Initiator = true,
-  Handshake = find_handshake(HandshakeType),
-  {ok,DHParms} = find_dh_parms(DHType),
-  {ok,CryptoParms} = find_crypto_parms(CryptoType),
-  {ok,HashParms} = find_hash_parms(HashType),
-  ProtocolParms = [{'PROTOCOL-NAME',protocol_name(HandshakeType, DHType, CryptoType, HashType)}],
-  io:format
-    ("Protocol name is ~p~n",
-     [proplists:get_value('PROTOCOL-NAME',ProtocolParms)]),
-  Parms = DHParms ++ CryptoParms ++ HashParms ++ ProtocolParms,
-
-  {Results,{CS1,CS2},State} =
-    execute_handshake
-      ('PROTOCOL-NAME'(),
-       Initiator,
-       Prologue,
-       {'LOCAL_STATIC'(),undefined,undefined,undefined},
-       Handshake),
-
-  [_,{read,PayloadBuffer},_] = Results,
-
-  {Result,_} = encryptWithAd(<<>>,Message,CS1),
-  Subst = make_subst_list(Parms),
-  SendTerm = subst(Result,Subst),
-  PayloadTerm = subst(PayloadBuffer,Subst),
-  io:format("SendTerm:~n~p~n",[SendTerm]),
-  io:format("PayloadTerm:~n~p~n",[PayloadTerm]),
-  {
-    SendTerm,
-    PayloadTerm
-  }.
-  
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-handshake_and_send_test() ->
-  Prologue = <<0,8,0,0,3>>,
-
-  HandshakeType = "XK",
-  DHType = "25519",
-  CryptoType = "ChaChaPoly",
-  HashType = "BLAKE2b",
-  
-  handshake_and_send(Prologue,HandshakeType,DHType,CryptoType,HashType,<<"ok\n">>).
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-test() ->
-  Initiator = true,
-  Prologue = <<0,8,0,0,3>>,
-
-  HandshakeType = "XK",
-  DHType = "25519",
-  CryptoType = "ChaChaPoly",
-  HashType = "BLAKE2b",
-
-  Handshake = find_handshake(HandshakeType),
-  {ok,DHParms} = find_dh_parms(DHType),
-  {ok,CryptoParms} = find_crypto_parms(CryptoType),
-  {ok,HashParms} = find_hash_parms(HashType),
-  ProtocolParms = [{'PROTOCOL-NAME',protocol_name(HandshakeType, DHType, CryptoType, HashType)}],
-  io:format
-    ("Protocol name is ~p~n",
-     [proplists:get_value('PROTOCOL-NAME',ProtocolParms)]),
-  Parms = DHParms ++ CryptoParms ++ HashParms ++ ProtocolParms,
-
-  {Results,{CS1,CS2},State} =
-    execute_handshake
-      ('PROTOCOL-NAME'(),
-       Initiator,
-       Prologue,
-       {s,undefined,undefined,undefined},
-       Handshake),
-
-  io:format("~n~nResults:~n"),
-  lists:foreach
-    (fun (Result) ->
-         io:format("~p~n~n",[Result])
-     end, Results),
-  io:format
-    ("~nCS1:~n~p~n",
-     [CS1]),
-  io:format
-    ("~nCS2:~n~p~n",
-     [CS2]),
-  io:format
-    ("~nFinal state:~n~p~n",
-     [State]),
-
-  FirstResult = 
-    lists:nth(1,Results),
-  io:format
-    ("Parms:~n~p~n",[Parms]),
-  SubstResult = 
-    subst(FirstResult,make_subst_list(Parms)),
-  io:format
-    ("~n~nSubstituted results is~n~p~n",
-     [SubstResult]),
-  SubstResult.
-
-  
-  
 
 

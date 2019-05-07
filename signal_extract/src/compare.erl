@@ -4,15 +4,15 @@
 %%% @end
 %%% Created :  9 Apr 2019 by Thomas Arts <thomas@SpaceGrey.local>
 
--module(signal_extract_concretize).
+-module(compare).
 
 -compile([export_all]).
 
-start(SemanticTerm,TraceTerm) ->
-    start(concrete_noise,SemanticTerm,TraceTerm).
+compare(SemanticTerm,TraceTerm) ->
+    compare(concrete_noise,SemanticTerm,TraceTerm).
 
-start(Concretizer,SemanticTerm,TraceTerm) ->
-    Concrete = concretize(SemanticTerm, Concretizer),
+compare(Concretizer,SemanticTerm,TraceTerm) ->
+    Concrete = concretize(list_to_merge(SemanticTerm), Concretizer),
     io:format("****************************************************\n"),
   difference(Concrete, TraceTerm, []).
 
@@ -97,16 +97,6 @@ diff(A, B, Subs) ->
 %%     {A, '/=',  B}.
 %% 
 
-read() ->
-%%  {TraceTerm, Binaries} = signal_extract:analyze_trace_file("enoise.trace"),
-%%  {wrote, ST} = noise:test(),
-  {TraceTerm, PayloadTerm} = signal_extract:analyze_trace_file("enoise.trace"),
-  {STs,STp} = noise:handshake_and_send_test(),
-  {
-    {TraceTerm, list_to_merge(STs)},
-    {PayloadTerm, list_to_merge(STp)}
-  }.
-      
 list_to_merge(L) when is_list(L) ->
   %% nicer to reverse the list and foldl over the tl with hd as
   %% first Acc (or simply define a recursive function that is
