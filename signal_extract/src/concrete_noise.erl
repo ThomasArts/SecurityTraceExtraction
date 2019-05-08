@@ -18,6 +18,9 @@
       {signal_binary_ops, merge, [Bin1, Bin2]}
   end.
 
+'STORE-KEYPAIR'(X) ->
+  throw(nyi).
+
 'PUBLIC-KEY'(X) ->
   case X of
     {'STORE-PUBLIC-KEY', [Key]}-> 
@@ -29,12 +32,17 @@
 %%      {enacl, crypto_sign_ed25519_public_to_curve25519, 
 %%       [{signal_binary_ops, extract, [KeyPair, 32, 32]}]};
     _ ->
-      io:format("public_key(~p)~n",[X]),
+      io:format("public_key(~p) nyi~n",[X]),
       throw(nyi)
   end.
 
 'PRIVATE-KEY'(X) ->
-  {enacl, crypto_sign_ed25519_secret_to_curve25519, [X]}.
+  case X of
+    {'STORE-KEYPAIR', [KeyPair]}-> 
+      {enacl, crypto_sign_ed25519_secret_to_curve25519, [KeyPair]};
+    {'STORE-PRIVATE-KEY', [Key]} ->
+      Key
+  end.
 
 'GENERATE_KEYPAIR'(X) ->
   {maps, get, [secret, {enacl, crypto_sign_ed25519_keypair, [X]}]}.
