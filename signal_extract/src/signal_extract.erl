@@ -38,7 +38,7 @@ noisy_trace(Handshake,DH,Crypto,Hash,TraceFileName) ->
   LoadModules =
     [
      enacl, enacl_nif, unicode_util, gen_tcp, inet_tcp, signal_extract_utils, gen, gen_server,
-     enoise_crypto_basics, signal_extract_utils, enoise_test, code, file, base64, io
+     enoise_crypto_basics, signal_extract_utils, enoise_test, code, file, base64, io, get_key
     ],
   lists:foreach(fun code:ensure_loaded/1, EnoiseModules++LoadModules),
   KnowsRS = echo_noise:knows_rs(Handshake),
@@ -157,17 +157,29 @@ analyze_trace_file(FileName) ->
      {enoise, gen_tcp_rcv_msg, 2}
     ],
 
+  CollapsableFunctions = 
+    [
+     {get_key, get_key, 3}
+    ],
+  
   io:format("~n~nDeterminizing trace...~n"),
   DetTraces = 
     lists:map
       (fun ({Pid,Trace}) -> {Pid,trace_make_call_deterministic(Trace)} end,
        Traces),
+  
+  io:format("~n~nCollapsing functions...~n"),
+  CollapsedTraces = 
+    lists:map
+      (fun ({Pid,Trace}) -> {Pid,collapse_calls(Trace,CollapsableFunctions)} end,
+       DetTraces),
+
   io:format("~n~nGiving names to binaries (and finding call sites)...~n"),
   lists:foreach
     (fun ({Pid,A}) -> 
          register_binaries(Pid, A, PredefinedBinaries)
-     end, DetTraces),
-  
+     end, CollapsedTraces),
+
   io:format("Traces:~n"),
   lists:foreach
     (fun ({Pid,Trace}) ->
@@ -175,15 +187,15 @@ analyze_trace_file(FileName) ->
          show_trace(Trace)
      end, Traces),
 
-  io:format("Det Traces:~n"),
+  io:format("Collapsed Traces:~n"),
   lists:foreach
     (fun ({Pid,Trace}) ->
          io:format("~nPid ~p:~n",[Pid]),
          show_trace(Trace)
-     end, DetTraces),
+     end, CollapsedTraces),
 
   io:format("~n~nTrying to derive binaries using rewriting...~n"),
-  compose_binaries(DetTraces),
+  compose_binaries(CollapsedTraces),
   
   io:format("~n~n~nBinary definitions:~n~n"),
   print_binary_register(),
@@ -195,14 +207,14 @@ analyze_trace_file(FileName) ->
 %%            [graphviz_traceback("trace2.dot",Traceback,2,PredefinedBinaries)]),
 
   io:format("Before send analysis~n"),
-  {Sends,{_Binaries,_}} = sends(DetTraces, NonFunctions),
+  {Sends,{_Binaries,_}} = sends(CollapsedTraces, NonFunctions),
   [_Port,FirstSend] = lists:nth(1,Sends),
     io:format
       ("~n~nThe first send is~n~p~n",
        [FirstSend]),
 
   io:format("Before checking post-protocol send~n"),
-  {Results,{Binaries,Counter}} = gen_tcp_sends(DetTraces, NonFunctions),
+  {Results,{Binaries,Counter}} = gen_tcp_sends(CollapsedTraces, NonFunctions),
   lists:foreach
     (fun ({Pid,Sends}) ->
          io:format("Pid ~p has ~p sends~n",[Pid,length(Sends)])
@@ -210,7 +222,7 @@ analyze_trace_file(FileName) ->
      Results),
 
   io:format("Before checking payload_messages~n"),
-  {ReadResults,_} = read_messages(DetTraces, NonFunctions, Binaries, Counter),
+  {ReadResults,_} = read_messages(CollapsedTraces, NonFunctions, Binaries, Counter),
   LastPayloadTerm = lists:last(ReadResults),
 
   {_,FromLastPid} = lists:nth(length(Results),Results),
@@ -301,6 +313,44 @@ delete_call(Call,[OtherItem|Rest]) ->
   case delete_call(Call,Rest) of
     false -> false;
     {I,Call,Deleted} -> {I,Call,[OtherItem|Deleted]}
+  end.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+collapse_calls(A,Collapsables) ->
+  collapse_calls(0,A,array:size(A),array:new(),0,Collapsables).
+collapse_calls(I,_,Size,B,_,_) when I>=Size ->
+  B;
+collapse_calls(I,A,Size,B,J,Collapsables) ->
+  Item = array:get(I,A),
+  BNew = array:set(J,Item,B),
+  case Item of
+    {trace_ts, Pid, call, {M,F,Args}, _} ->
+      Arity = length(Args),
+      MFArity = {M,F,Arity},
+      case lists:member(MFArity,Collapsables) of
+        true ->
+          skip_until_return(I+1,A,Size,MFArity,BNew,J+1,[],Collapsables);
+        false ->
+          collapse_calls(I+1,A,Size,BNew,J+1,Collapsables)
+      end;
+    _ -> collapse_calls(I+1,A,Size,BNew,J+1,Collapsables)
+  end.
+
+skip_until_return(I,A,Size,MFArity={M,F,Arity},B,J,Stack,Collapsables) when I>=Size ->
+  io:format("~n*** Error: no return for call ~p~n",[MFArity]),
+  error(bad);
+skip_until_return(I,A,Size,MFArity={M,F,Arity},B,J,Stack,Collapsables) ->
+  Item = array:get(I,A),
+  case Item of
+    {trace_ts, Pid, return_from, MFArity, _, _} when Stack==[] ->
+      collapse_calls(I+1,A,Size,array:set(J,Item,B),J+1,Collapsables);
+    {trace_ts, Pid, return_from, Call, _, _} ->
+      skip_until_return(I+1,A,Size,MFArity,B,J,tl(Stack),Collapsables);
+    {trace_ts, Pid, call, Call, _} ->
+      skip_until_return(I+1,A,Size,MFArity,B,J,[Call|Stack],Collapsables);
+    _ ->
+      skip_until_return(I+1,A,Size,MFArity,B,J,Stack,Collapsables)
   end.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
