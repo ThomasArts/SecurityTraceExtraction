@@ -60,7 +60,7 @@ do_trace(TracedPid,ToPid,Modules) ->
                 %%'receive',
                 send,
                 %% procs,ports, -- better not
-                return_to,
+                %%return_to,
                 %% set_on_link,
                 %%arity,
                 %%all,
@@ -70,7 +70,7 @@ do_trace(TracedPid,ToPid,Modules) ->
   erlang:trace_pattern({enacl_nif, '_', '_'}, false, []),
   lists:foreach
     (fun (Module) -> 
-         erlang:trace_pattern({Module, '_', '_'}, [{'_', [], [{return_trace}]}], [local]) 
+         erlang:trace_pattern({Module, '_', '_'}, [{'_', [], [{return_trace},{exception_trace}]}], [local]) 
      end,
      Modules).
 
@@ -426,6 +426,14 @@ compose_binaries(Traces) ->
                case is_produced(Register) of
                  true -> {loc(Source),loc(return(Register))};
                  _ -> call_limits(SourcePid,loc(Source),Traces)
+               end,
+               case lists:keyfind(SourcePid,1,Traces) of
+                 false ->
+                   io:format
+                     ("~n*** Error: cannot find SourcePid ~p (from ~p) in traces???~n",
+                      [SourcePid,Register]),
+                   error(bad);
+                 _ -> ok
                end,
              {_,A} = lists:keyfind(SourcePid,1,Traces),
              PreContextBinaries = 
