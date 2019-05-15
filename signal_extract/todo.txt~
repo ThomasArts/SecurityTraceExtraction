@@ -1,0 +1,41 @@
+- We do not see the correctness checking part of the protocol (received values)
+if we only focus on what is sent, because stricly speaking, the checking
+probably does not influence the values resent.
+
+- We could trace all flows from some value; it would be nice to
+mark explicit decisions in the flow.
+
+- A path to error, or no path to error.
+And what is the path to error.
+And no path to output after some interaction.
+
+- Substitutions:
+do not use symbolic terms such as 'Prologue' in the concrete trace.
+
+- Be careful to extract values return values correctly in the concrete trace,
+for example: M:F(Args) -> {ok,Binary} => Binary = element(2,M:F(Args)).
+
+- Maybe remember prospective mappings, and use them later on to try to explain
+other differences.
+
+- Be careful with repeated values: some calls are not functional
+(new keypair); we need as input a list of such calls.
+Maybe we use a let/bind syntax in the concrete term to express such bindings:
+  {let, MatchExpr, Call, in, Expr}:
+{let, {ok,{B1,B2}}, {enacl,crypto_sign_ed25519_keypair,[]}, ...}
+
+We could do a similar thing for the symbolic calls which are not functional: 
+
+Or do we always want to use let for bindings? (maybe)
+
+- We do an analysis which is modular on a set of substitutions:
+
+SYMBOLIC_VALUE = Binary from call(...) == <...>
+
+- Conditional rewrites, which can be validated with the actual binaries,
+or...?
+
+- Does it really work to show the payload extraction for reads?
+
+- A transformation on the input buffer
+
