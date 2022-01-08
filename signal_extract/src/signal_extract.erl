@@ -6,7 +6,6 @@
 -export([register_binaries/3,trace_make_call_deterministic/1]).
 -export([get_traces/1,compose_binaries/1,print_array/2]).
 -export([print_binary_register/0,show_trace/1,show_registered_trace/1]).
--export([test/0]).
 
 -compile(export_all).
 
