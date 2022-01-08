@@ -1,15 +1,11 @@
 -module(noise).
 
--export([test/0]).
-%% -export(['MERGE'/2]).
+-include_lib("kernel/include/logger.hrl").
 
-%%-define(debug,true).
--ifdef(debug).
--define(LOG(X,Y),
-	io:format("~p(~p): ~s",[?MODULE,self(),io_lib:format(X,Y)])).
--else.
--define(LOG(X,Y),true).
--endif.
+-export([execute_handshake/5]).
+-export(['MERGE'/2,'PROTOCOL-NAME'/0,'LOCAL_STATIC'/0,'STORE-KEYPAIR'/1]).
+-export([encryptWithAd/3]).
+
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
@@ -35,8 +31,8 @@
           initiator,
           output_buffer=[],
           input_buffer,
-          payload_buffer=[],
-          counter=0,  %% Numbering local ephemeral key pairs
+          payload_buffer=undefined,
+          key_counter=0,  %% Numbering local ephemeral key pairs
           symmetricState = #symmetricState{}
         }).
 
@@ -85,7 +81,6 @@
 'XOR'(B1,B2) ->
   {?FUNCTION_NAME,[B1,B2]}.
 
-%% MERGE is || in the Noise sepcification
 'HMAC-HASH'(Key,Text) ->
   Key1 = 'PAD_TO_USING'(Key,'BLOCKLEN'(),0),
   OPad = 'PAD_TO_USING'(<<>>,'BLOCKLEN'(),16#5c),
@@ -119,6 +114,12 @@
 'PROTOCOL-NAME'() ->
   {?FUNCTION_NAME,[]}.
 
+'STORE-PUBLIC-KEY'(PublicKey) ->
+  {?FUNCTION_NAME,[PublicKey]}.
+
+'STORE-KEYPAIR'(KeyPair) ->
+  {?FUNCTION_NAME,[KeyPair]}.
+
 'PRIVATE-KEY'(KeyName) ->
   {?FUNCTION_NAME,[KeyName]}.
 
@@ -150,6 +151,9 @@
   {?FUNCTION_NAME,[Loc]}.
 
 % ----------------------------------------------------------------------
+
+'PLUS'(Expr1,Expr2) ->
+  {?FUNCTION_NAME,[Expr1,Expr2]}.
 
 'IF'(Condition,Expr1,Expr2) ->
   {?FUNCTION_NAME,[Condition,Expr1,Expr2]}.
@@ -250,6 +254,7 @@ encryptAndHash(PlainText,SymmetricState) ->
   {CipherText,SymmetricStateH}.
 
 decryptAndHash(CipherText,SymmetricState) ->
+  ?LOG_DEBUG("decryptAndHash(~p) key=~p~n",[CipherText,(SymmetricState#symmetricState.cipherState)#cipherState.k]),
   {PlainText,SymmetricState1} = 
     return_and_modify_cipherState
       (fun (CS) -> decryptWithAd(SymmetricState#symmetricState.h,CipherText,CS) end,
@@ -260,11 +265,11 @@ decryptAndHash(CipherText,SymmetricState) ->
 split(SymmetricState) ->
   {Temp_K1, Temp_K2} = 'HKDF'(SymmetricState#symmetricState.ck, <<>>, 2),
   NewTemp_K1 = 
-    'IF'('EQ'('HASHLEN',64),
+    'IF'('EQ'('HASHLEN'(),64),
         'TRUNCATE'(Temp_K1,32),
          Temp_K1),
   NewTemp_K2 = 
-    'IF'('EQ'('HASHLEN',64),
+    'IF'('EQ'('HASHLEN'(),64),
         'TRUNCATE'(Temp_K2,32),
          Temp_K2),
   {
@@ -305,16 +310,16 @@ initialize(ProtocolName,Handshake,Initiator,Prologue,S,E,RS,RE) ->
   PublicKeys = 
     extractPublicKeysFromPreMessages(Initiator, Handshake),
 
-  io:format("Public keys are ~p~n",[PublicKeys]),
+  ?LOG_DEBUG("Public keys are ~p~n",[PublicKeys]),
 
   HandshakeState7 = 
     lists:foldl
       (fun (Key,AccHandshakeState) ->
            if
-             Key==s -> AccHandshakeState#handshakeState{s='LOCAL_STATIC'()};
-             Key==e -> AccHandshakeState#handshakeState{e='LOCAL_EPHEMERAL'()};
-             Key==rs -> AccHandshakeState#handshakeState{rs='REMOTE_STATIC'()};
-             Key==re -> AccHandshakeState#handshakeState{re='REMOTE_EPHEMERAL'()}
+             Key==s -> AccHandshakeState#handshakeState{s='STORE-KEYPAIR'('LOCAL_STATIC'())};
+             Key==e -> AccHandshakeState#handshakeState{e='STORE-KEYPAIR'('LOCAL_EPHEMERAL'())};
+             Key==rs -> AccHandshakeState#handshakeState{rs='STORE-PUBLIC-KEY'('REMOTE_STATIC'())};
+             Key==re -> AccHandshakeState#handshakeState{re='STORE-PUBLIC-KEY'('REMOTE_EPHEMERAL'())}
            end
        end,
        HandshakeState6,PublicKeys),
@@ -331,40 +336,41 @@ writeMessage(Message,HS) ->
   IsInitiator = HS#handshakeState.initiator,
   case Message of
     e ->
-      {Key,HS0} = generateEmpheralKeyPair(HS),
-      HS1 = HS0#handshakeState{e=Key},
-      PubE = 'PUBLIC-KEY'(HS1#handshakeState.e),
+      {KeyPair,HS0} = generateEmpheralKeyPair(HS),
+      HS1 = HS0#handshakeState{e='STORE-KEYPAIR'(KeyPair)},
+      PubE = 'PUBLIC-KEY'(key_value(e,HS1)),
       HS2 = message_append(PubE,HS1),
       modify_symmetricState(fun (SS) -> mixHash(PubE,SS) end, HS2);
     s ->
       {Term,HS1} = 
         return_and_modify_symmetricState
-          (fun (SS) -> encryptAndHash('PUBLIC-KEY'(HS#handshakeState.s),SS) end,
+          (fun (SS) -> encryptAndHash('PUBLIC-KEY'(key_value(s,HS)),SS) end,
            HS),
       message_append(Term,HS1);
     ee ->
-      Term = 'DH'(HS#handshakeState.e,HS#handshakeState.re),
+      Term = 'DH'(key_value(e,HS),key_value(re,HS)),
       modify_symmetricState(fun (SS) -> mixKey(Term,SS) end, HS);
     es ->
       Term = 
         if
           IsInitiator ->
-            'DH'(HS#handshakeState.e,HS#handshakeState.rs);
+            'DH'(key_value(e,HS),key_value(rs,HS));
           true ->
-            'DH'(HS#handshakeState.s,HS#handshakeState.re)
+            'DH'(key_value(s,HS),key_value(re,HS))
         end,
       modify_symmetricState(fun (SS) -> mixKey(Term,SS) end, HS);
     se ->
+      ?LOG_DEBUG("se: initiator=~p s=~p~n",[HS#handshakeState.initiator,key_value(s,HS)]),
       Term = 
         if
           IsInitiator ->
-            'DH'(HS#handshakeState.s,HS#handshakeState.re);
+            'DH'(key_value(s,HS),key_value(re,HS));
           true ->
-            'DH'(HS#handshakeState.e,HS#handshakeState.rs)
+            'DH'(key_value(e,HS),key_value(rs,HS))
         end,
       modify_symmetricState(fun (SS) -> mixKey(Term,SS) end, HS);
     ss ->
-      Term = 'DH'(HS#handshakeState.s,HS#handshakeState.rs),
+      Term = 'DH'(key_value(s,HS),key_value(rs,HS)),
       modify_symmetricState(fun (SS) -> mixKey(Term,SS) end, HS)
   end.
 
@@ -382,6 +388,7 @@ message_append(Msg,HandshakeState) ->
     {output_buffer=HandshakeState#handshakeState.output_buffer++[Msg]}.
 
 readMessage(Message,HS) ->
+  ?LOG_DEBUG("readMessage(~p) Initiator=~p ~n",[Message,HS#handshakeState.initiator]),
   IsInitiator = HS#handshakeState.initiator,
   case Message of
     e ->
@@ -389,16 +396,16 @@ readMessage(Message,HS) ->
         HS#handshakeState.re == undefined ->
           HS0 = HS#handshakeState
             {
-              re = 'READ'('DHLEN'(),HS#handshakeState.input_buffer),
+              re = 'STORE-PUBLIC-KEY'('READ'('DHLEN'(),HS#handshakeState.input_buffer)),
               input_buffer = 'SKIP'('DHLEN'(),HS#handshakeState.input_buffer)
             },
           modify_symmetricState
-            (fun (SS) -> mixHash('PUBLIC-KEY'(HS0#handshakeState.re),SS) end, 
+            (fun (SS) -> mixHash('PUBLIC-KEY'(key_value(re,HS0)),SS) end, 
              HS0)
       end;
     s ->
       CS = (HS#handshakeState.symmetricState)#symmetricState.cipherState,
-      NumBytes = 'IF'(hasKey(CS),'DHLEN'()+16,'DHLEN'),
+      NumBytes = 'IF'(hasKey(CS),'PLUS'('DHLEN'(),16),'DHLEN'),
       Temp = 'READ'(NumBytes,HS#handshakeState.input_buffer),
       if
         HS#handshakeState.rs == undefined ->
@@ -407,44 +414,48 @@ readMessage(Message,HS) ->
               (fun (SS) -> decryptAndHash(Temp,SS) end, HS),
           HS0#handshakeState
             {
-            rs=DecryptedTerm,
+            rs='STORE-PUBLIC-KEY'(DecryptedTerm),
             input_buffer='SKIP'('DHLEN'(),HS#handshakeState.input_buffer)
            }
       end;
     ee ->
-      Term = 'DH'(HS#handshakeState.e,HS#handshakeState.re),
+      ?LOG_DEBUG("ee: ~p~nand ~p~n",[key_value(e,HS),key_value(re,HS)]),
+      Term = 'DH'(key_value(e,HS),key_value(re,HS)),
       modify_symmetricState(fun (SS) -> mixKey(Term,SS) end, HS);
     es ->
       Term =
         if
           IsInitiator ->
-            'DH'(HS#handshakeState.e,HS#handshakeState.rs);
+            'DH'(key_value(e,HS),key_value(rs,HS));
           true ->
-            'DH'(HS#handshakeState.s,HS#handshakeState.re)
+            'DH'(key_value(s,HS),key_value(re,HS))
         end,
       modify_symmetricState(fun (SS) -> mixKey(Term,SS) end, HS);
     se ->
       Term =
         if
           IsInitiator ->
-            'DH'(HS#handshakeState.s,HS#handshakeState.re);
+            'DH'(key_value(s,HS),key_value(re,HS));
           true ->
-            'DH'(HS#handshakeState.e,HS#handshakeState.rs)
+            'DH'(key_value(e,HS),key_value(rs,HS))
         end,
       modify_symmetricState(fun (SS) -> mixKey(Term,SS) end, HS);
     ss ->
-      Term = 'DH'(HS#handshakeState.s,HS#handshakeState.rs),
+      Term = 'DH'(key_value(s,HS),key_value(rs,HS)),
       modify_symmetricState(fun (SS) -> mixKey(Term,SS) end, HS)
   end.
 
 readMessages([],HS) ->
+  ?LOG_DEBUG("readMessages([])~n"),
   InputBuffer = HS#handshakeState.input_buffer,
   PayloadToDecrypt = 'READ'('SIZE'(InputBuffer),InputBuffer),
   {DecryptedTerm,HS0} = 
     return_and_modify_symmetricState
       (fun (SS) -> decryptAndHash(PayloadToDecrypt,SS) end, HS),
+  ?LOG_DEBUG("payload term is ~p~n",[DecryptedTerm]),
   HS0#handshakeState{payload_buffer=DecryptedTerm};
 readMessages([Message|Messages],HandshakeState) ->
+  ?LOG_DEBUG("readMessages(~p)~n",[[Message|Messages]]),
   HS = readMessage(Message,HandshakeState),
   readMessages(Messages,HS).
 
@@ -452,7 +463,7 @@ readMessages([Message|Messages],HandshakeState) ->
 
 execute_handshake(ProtocolName,Initiator,Prologue,{S,E,RS,RE},Handshake) ->
   State = #state{handshakeState=initialize(ProtocolName,Handshake,Initiator,Prologue,S,E,RS,RE)},
-  {_PreHandshake,CommHandshake} = split_handshake(Handshake),
+  {_PreHandshake,CommHandshake} = Handshake,
   execute_handshake(CommHandshake,State).
 
 execute_handshake([],State) ->
@@ -467,6 +478,7 @@ execute_handshake([MessagePattern|RestMessagePatterns],State) ->
   {[Result|Results],Split,FinalState}.
 
 execute_message_pattern(MessagePattern,State) ->
+  ?LOG_DEBUG("execute_message_pattern(~p)~n",[MessagePattern]),
   HS = State#state.handshakeState,
   IsInitiator = HS#handshakeState.initiator,
   Messages = 
@@ -495,19 +507,17 @@ execute_message_pattern(MessagePattern,State) ->
     true -> 
       ReadCounter = State#state.counter,
       HS1 = HS#handshakeState{input_buffer = 'INPUT_BUFFER'(ReadCounter)},
-      HS2 = readMessages(Messages,HS1),
+      HS2 = readMessages(Messages,HS1#handshakeState{payload_buffer=undefined}),
       {
         {read,HS2#handshakeState.payload_buffer},
-        State#state
-        {handshakeState = 
-           HS2#handshakeState{input_buffer=undefined,payload_buffer=[]}}
+        State#state{handshakeState=HS2,counter=ReadCounter+1}
       }
   end.
 
 % ----------------------------------------------------------------------
 
 extractPublicKeysFromPreMessages(Initiator,HandshakePattern) ->  
-  {PreMessages,_} = split_handshake(HandshakePattern),
+  {PreMessages,_} = HandshakePattern,
   InitiatorKeys = extractPublicKeys(Initiator,PreMessages,snd),
   ResponderKeys = extractPublicKeys(Initiator,PreMessages,rcv),
   InitiatorKeys ++ ResponderKeys.
@@ -539,11 +549,18 @@ remote_key(e) ->
   re.
 
 key_value(Key,HS) ->
+  Value =
+    if
+      Key==s -> HS#handshakeState.s;
+      Key==e -> HS#handshakeState.e;
+      Key==rs -> HS#handshakeState.rs;
+      Key==re -> HS#handshakeState.re
+    end,
   if
-    Key==s -> HS#handshakeState.s;
-    Key==e -> HS#handshakeState.e;
-    Key==rs -> HS#handshakeState.rs;
-    Key==re -> HS#handshakeState.re
+    Value==undefined ->
+      ?LOG_DEBUG("~n*** Error: undefined key ~p~n",[Key]),
+      error(bad);
+    true -> Value
   end.
 
 messagePatterns({_,Patterns}) ->
@@ -552,180 +569,11 @@ messagePatterns({_,Patterns}) ->
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 generateEmpheralKeyPair(HandshakeState) ->
-  Counter = HandshakeState#handshakeState.counter,
+  KeyCounter = HandshakeState#handshakeState.key_counter,
   {
-    'GENERATE_KEYPAIR'(Counter),
-    HandshakeState#handshakeState{counter=Counter+1}
+    'GENERATE_KEYPAIR'(KeyCounter),
+    HandshakeState#handshakeState{key_counter=KeyCounter+1}
   }.
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-protocol_name(HandshakeName,DHType,CipherType,HashType) ->
-  list_to_binary("Noise_"++HandshakeName++"_"++DHType++"_"++CipherType++"_"++HashType).
-
-split_handshake(Handshake) ->
-  Handshake.
-
-find_handshake(HandshakeName) ->
-  if
-    HandshakeName == "XK" ->
-      {
-        [{rcv,[s]}],
-        [
-         {snd,[e,es]},
-         {rcv,[e,ee]},
-         {snd,[s,se]}
-        ]
-      }
-  end.
-
-find_dh_parms("25519") ->
-  {ok,[{'DHLEN',32}]}.
-
-find_crypto_parms("ChaChaPoly") ->
-  {ok,[]}.
-
-find_hash_parms("BLAKE2b") ->
-  {ok,[{'HASHLEN',64}, {'BLOCKLEN',128}]}.
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-zero_args(Functor,Value) ->          
-  fun (Term) ->
-      case Term of
-        {Functor,[]} -> Value;
-        _ -> Term
-      end
-  end.
-       
-'eq_fun'() ->
-  fun (Term) ->
-      case Term of
-        {'EQ',[I1,I2]} when is_integer(I1), is_integer(I2) ->
-          I1 == I2;
-        {'EQ',[B1,B2]} when is_binary(B1), is_binary(B2) ->
-          B1 == B2;
-        _ -> Term
-      end
-  end.
-
-'leq_fun'() ->
-  fun (Term) ->
-      case Term of
-        {'LEQ',[I1,I2]} when is_integer(I1), is_integer(I2) -> I1 =< I2;
-        _ -> Term
-      end
-  end.
-
-'if_fun'() ->
-  fun (Term) ->
-      case Term of
-        {'IF',[true,Expr1,_]} -> Expr1;
-        {'IF',[false,_,Expr2]} -> Expr2;
-        _ -> Term
-      end
-  end.
-
-'size_fun'() ->
-  fun (Term) ->
-      case Term of
-        {'SIZE',[B]} when is_binary(B) -> byte_size(B);
-        _ -> Term
-      end
-  end.
-
-make_subst_list(Defs) ->
-  [
-   'if_fun'(), 'eq_fun'(), 'leq_fun'(), 'size_fun'()
-   | lists:map(fun ({Atom,Value}) -> zero_args(Atom,Value) end, Defs)
-  ].
-
-subst({Atom,List},Substs) when is_atom(Atom), is_list(List) ->
-  SubstList = subst(List,Substs),
-  Term = {Atom,SubstList},
-  case do_subst(Term,Substs) of
-    Term -> 
-      Term;
-    OtherTerm -> 
-      subst(OtherTerm,Substs);
-    _ -> 
-      Term
-  end;
-subst(Tuple,Substs) when is_tuple(Tuple) ->
-  list_to_tuple(subst(tuple_to_list(Tuple),Substs));
-subst([Hd|Tl],Substs) ->
-  [subst(Hd,Substs)|subst(Tl,Substs)];
-subst(Map,Substs) when is_map(Map) ->
-  lists:foldl(fun ({Key,Value},M) ->
-                  maps:put(Key,Value,M)
-              end, #{}, subst(maps:to_list(Map),Substs));
-subst(T,_) ->
-  T.
-
-do_subst(Term,[]) ->
-  Term;
-do_subst(Term,[First|Rest]) ->
-  case First(Term) of
-    Term -> do_subst(Term,Rest);
-    OtherTerm -> OtherTerm
-  end.
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-test() ->
-  Initiator = true,
-  Prologue = <<0,8,0,0,3>>,
-
-  HandshakeType = "XK",
-  DHType = "25519",
-  CryptoType = "ChaChaPoly",
-  HashType = "BLAKE2b",
-
-  Handshake = find_handshake(HandshakeType),
-  {ok,DHParms} = find_dh_parms(DHType),
-  {ok,CryptoParms} = find_crypto_parms(CryptoType),
-  {ok,HashParms} = find_hash_parms(HashType),
-  ProtocolParms = [{'PROTOCOL-NAME',protocol_name(HandshakeType, DHType, CryptoType, HashType)}],
-  io:format
-    ("Protocol name is ~p~n",
-     [proplists:get_value('PROTOCOL-NAME',ProtocolParms)]),
-  Parms = DHParms ++ CryptoParms ++ HashParms ++ ProtocolParms,
-
-  {Results,{CS1,CS2},State} =
-    execute_handshake
-      ('PROTOCOL-NAME'(),
-       Initiator,
-       Prologue,
-       {s,undefined,undefined,undefined},
-       Handshake),
-
-  io:format("~n~nResults:~n"),
-  lists:foreach
-    (fun (Result) ->
-         io:format("~p~n~n",[Result])
-     end, Results),
-  io:format
-    ("~nCS1:~n~p~n",
-     [CS1]),
-  io:format
-    ("~nCS2:~n~p~n",
-     [CS2]),
-  io:format
-    ("~nFinal state:~n~p~n",
-     [State]),
-
-  FirstResult = 
-    lists:nth(1,Results),
-  io:format
-    ("Parms:~n~p~n",[Parms]),
-  SubstResult = 
-    subst(FirstResult,make_subst_list(Parms)),
-  io:format
-    ("~n~nSubstituted results is~n~p~n",
-     [SubstResult]),
-  SubstResult.
-
-  
-  
 
 
