@@ -12,8 +12,7 @@ compare(SemanticTerm,TraceTerm) ->
     compare(concrete_noise,SemanticTerm,TraceTerm).
 
 compare(Concretizer,SemanticTerm,TraceTerm) ->
-    Concrete = concretize(list_to_merge(SemanticTerm), Concretizer),
-    io:format("****************************************************\n"),
+  Concrete = concretize(list_to_merge(SemanticTerm), Concretizer),
   difference(Concrete, TraceTerm, []).
 
 concretize(List, Concretizer) when is_list(List) ->

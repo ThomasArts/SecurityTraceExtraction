@@ -9,7 +9,7 @@ check_and_generate(Handshake,DH,Crypto,Hash) ->
 
 check(Handshake,DH,Crypto,Hash,TraceFile) ->
   {TraceSend, TracePayload} = signal_extract:analyze_trace_file(TraceFile),
-  {SemanticSend, SemanticPayload} = run_noise:handshake_and_send(Handshake,DH,Crypto,Hash,<<"ok\n">>),
+  {SemanticSend, SemanticPayload} = run_noise:handshake_and_send(Handshake,DH,Crypto,Hash,{'MESSAGE',[]}),
   
   {SendDiff,SendSub} = compare:compare(SemanticSend,TraceSend),
   io:format("~n~nSend Comparison:~n~p~nSubstitution:~n~p~n",[SendDiff,SendSub]), 
@@ -22,6 +22,8 @@ check(Handshake,DH,Crypto,Hash,TraceFile) ->
 test() ->
   check_and_generate("XK","25519","ChaChaPoly","BLAKE2b").
 
-%% check:check_and_generate("XN","25519","ChaChaPoly","BLAKE2b").
-%% check:check_and_generate("XX","25519","ChaChaPoly","BLAKE2b").
+check() ->
+  check("XK","25519","ChaChaPoly","BLAKE2b","enoise.trace").
+
+
 

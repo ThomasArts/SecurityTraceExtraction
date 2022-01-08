@@ -1,5 +1,7 @@
 -module(signal_extract).
 
+-include_lib("kernel/include/logger.hrl").
+
 -export([noisy_trace/0,noisy_trace/5]).
 -export([register_binaries/3,trace_make_call_deterministic/1]).
 -export([get_traces/1,compose_binaries/1,print_array/2]).
@@ -10,13 +12,6 @@
 
 -export([print_call/1,print_full_call/1]).
 
--define(debug,true).
--ifdef(debug).
--define(LOG(X,Y),
-	io:format("~p(~p): ~s",[?MODULE,self(),io_lib:format(X,Y)])).
--else.
--define(LOG(X,Y),true).
--endif.
 
 -record(binary,{value,name,seen,time,source,return,pid}).
 -record(item,{loc,item}).
@@ -85,7 +80,7 @@ test(F, Modules, TraceFileName) ->
   Computer ! start,
   receive
     {Computer, stopped, Value} -> 
-      ?LOG("computed value ~p~n",[Value]), 
+      ?LOG_DEBUG("computed value ~p~n",[Value]), 
       timer:sleep(5000),
       Tracer ! {stop, self(), TraceFileName},
       receive
@@ -115,7 +110,7 @@ tracer1(L) ->
     Tuple when is_tuple(Tuple), size(Tuple)>1, element(1,Tuple)==trace_ts ->
       tracer1([Tuple|L]);
     Other ->
-      ?LOG("Warning: strange message ~p~n",[Other]),
+      ?LOG_WARNING("Strange message ~p~n",[Other]),
       tracer1(L)
   end.
 
@@ -123,6 +118,7 @@ get_traces(FileName) ->
   {ok,B} = file:read_file(FileName),
   case binary_to_term(B) of
     {trace,L} ->
+      ?LOG_DEBUG("Raw trace file has ~p lines~n",[length(L)]),
       PidTraces = 
         lists:foldl
           (fun (Item,Traces) ->
@@ -162,66 +158,66 @@ analyze_trace_file(FileName) ->
      {get_key, get_key, 3}
     ],
   
-  io:format("~n~nDeterminizing trace...~n"),
+  ?LOG_DEBUG("~n~nDeterminizing trace...~n"),
   DetTraces = 
     lists:map
       (fun ({Pid,Trace}) -> {Pid,trace_make_call_deterministic(Trace)} end,
        Traces),
   
-  io:format("~n~nCollapsing functions...~n"),
+  ?LOG_DEBUG("~n~nCollapsing functions...~n"),
   CollapsedTraces = 
     lists:map
       (fun ({Pid,Trace}) -> {Pid,collapse_calls(Trace,CollapsableFunctions)} end,
        DetTraces),
 
-  io:format("~n~nGiving names to binaries (and finding call sites)...~n"),
+  ?LOG_DEBUG("~n~nGiving names to binaries (and finding call sites)...~n"),
   lists:foreach
     (fun ({Pid,A}) -> 
          register_binaries(Pid, A, PredefinedBinaries)
      end, CollapsedTraces),
 
-  io:format("Traces:~n"),
+  ?LOG_DEBUG("Traces:~n"),
   lists:foreach
     (fun ({Pid,Trace}) ->
-         io:format("~nPid ~p:~n",[Pid]),
+         ?LOG_DEBUG("~nPid ~p:~n",[Pid]),
          show_trace(Trace)
      end, Traces),
 
-  io:format("Collapsed Traces:~n"),
+  ?LOG_DEBUG("Collapsed Traces:~n"),
   lists:foreach
     (fun ({Pid,Trace}) ->
-         io:format("~nPid ~p:~n",[Pid]),
+         ?LOG_DEBUG("~nPid ~p:~n",[Pid]),
          show_trace(Trace)
      end, CollapsedTraces),
 
-  io:format("~n~nTrying to derive binaries using rewriting...~n"),
+  ?LOG_DEBUG("~n~nTrying to derive binaries using rewriting...~n"),
   compose_binaries(CollapsedTraces),
   
-  io:format("~n~n~nBinary definitions:~n~n"),
+  ?LOG_DEBUG("~n~n~nBinary definitions:~n~n"),
   print_binary_register(),
   
-%%  io:format("~n~n~nGenerating graphviz model:~n~n"),
-%%  io:format("Traceback:~n~p~n",
+%%  ?LOG_DEBUG("~n~n~nGenerating graphviz model:~n~n"),
+%%  ?LOG_DEBUG("Traceback:~n~p~n",
 %%            [graphviz_traceback("trace1.dot",Traceback,1,PredefinedBinaries)]),
-%%  io:format("Traceback:~n~p~n",
+%%  ?LOG_DEBUG("Traceback:~n~p~n",
 %%            [graphviz_traceback("trace2.dot",Traceback,2,PredefinedBinaries)]),
 
-  io:format("Before send analysis~n"),
+  ?LOG_DEBUG("Before send analysis~n"),
   {Sends,{_Binaries,_}} = sends(CollapsedTraces, NonFunctions),
   [_Port,FirstSend] = lists:nth(1,Sends),
-    io:format
+    ?LOG_DEBUG
       ("~n~nThe first send is~n~p~n",
        [FirstSend]),
 
-  io:format("Before checking post-protocol send~n"),
+  ?LOG_DEBUG("Before checking post-protocol send~n"),
   {Results,{Binaries,Counter}} = gen_tcp_sends(CollapsedTraces, NonFunctions),
   lists:foreach
     (fun ({Pid,Sends}) ->
-         io:format("Pid ~p has ~p sends~n",[Pid,length(Sends)])
+         ?LOG_DEBUG("Pid ~p has ~p sends~n",[Pid,length(Sends)])
      end,
      Results),
 
-  io:format("Before checking payload_messages~n"),
+  ?LOG_DEBUG("Before checking payload_messages~n"),
   {ReadResults,_} = read_messages(CollapsedTraces, NonFunctions, Binaries, Counter),
   LastPayloadTerm = lists:last(ReadResults),
 
@@ -242,7 +238,7 @@ trace_make_call_deterministic(I,Size,A,B,_J,RemainingCalls) when I>=Size ->
   Ts = element(size(LastElement),LastElement),
   if
     RemainingCalls =/= [] ->
-      io:format
+      ?LOG_DEBUG
         ("~n*** Warning: remaining calls:~n  ~p~n",
          [RemainingCalls]),
       {_,Arr} =
@@ -281,7 +277,7 @@ leaving(Call,Reason,Item,I,Size,A,B,J,ActiveCalls) ->
       NewB = array:set(J,Item,B),
       trace_make_call_deterministic(I+1,Size,A,NewB,J+1,Rest);
     [{OtherI,OtherCall}|_Rest] ->
-      io:format
+      ?LOG_DEBUG
         ("~n*** Error: ~p: left (~p) ~p but expected return to~n~p:~p~n",
          [I,Reason,Call,OtherI,OtherCall]),
       ReturnedCall = 
@@ -296,14 +292,14 @@ leaving(Call,Reason,Item,I,Size,A,B,J,ActiveCalls) ->
       NewB = array:set(J,ReturnedCall,B),
       trace_make_call_deterministic(I,Size,NewA,NewB,J+1,NewActiveCalls);
     [] ->
-      io:format
+      ?LOG_DEBUG
         ("~n*** Error: ~p: left ~p but there was no active call~n",
          [I,Call]),
       trace_make_call_deterministic(I+1,Size,A,B,J,ActiveCalls)
   end.
 
 delete_call(Call,[]) ->    
-  io:format
+  ?LOG_DEBUG
     ("~n*** Error: returned from ~p but there was no active call to that function~n",
      [Call]),
   false;
@@ -338,7 +334,7 @@ collapse_calls(I,A,Size,B,J,Collapsables) ->
   end.
 
 skip_until_return(I,A,Size,MFArity={M,F,Arity},B,J,Stack,Collapsables) when I>=Size ->
-  io:format("~n*** Error: no return for call ~p~n",[MFArity]),
+  ?LOG_DEBUG("~n*** Error: no return for call ~p~n",[MFArity]),
   error(bad);
 skip_until_return(I,A,Size,MFArity={M,F,Arity},B,J,Stack,Collapsables) ->
   Item = array:get(I,A),
@@ -389,7 +385,7 @@ register_binaries(Pid,I,Size,Pre,A) ->
                               time=TimeStamp
                              };
                          _ ->
-                           io:format
+                           ?LOG_DEBUG
                              ("~n*** Error: cannot find call corresponding to~n  ~p~n",
                               [TraceItem]),
                            error(bad)
@@ -416,12 +412,12 @@ register_binaries(Pid,I,Size,Pre,A) ->
 compose_binaries(Traces) ->
   lists:foreach
     (fun ({Binary,Register}) ->
-         io:format("binary ~p~n",[Register]),
+         ?LOG_DEBUG("binary ~p~n",[Register]),
          case is_consumed(Register) orelse is_produced(Register) of
            true ->
              Source = source(Register),
              SourcePid = pid(Register),
-             ?LOG("~ntrying to compose binary~n~p~n==~p~n",[Register,Binary]),
+             ?LOG_DEBUG("~ntrying to compose binary~n~p~n==~p~n",[Register,Binary]),
              {StartTime,EndTime} = 
                case is_produced(Register) of
                  true -> {loc(Source),loc(return(Register))};
@@ -429,7 +425,7 @@ compose_binaries(Traces) ->
                end,
                case lists:keyfind(SourcePid,1,Traces) of
                  false ->
-                   io:format
+                   ?LOG_DEBUG
                      ("~n*** Error: cannot find SourcePid ~p (from ~p) in traces???~n",
                       [SourcePid,Register]),
                    error(bad);
@@ -438,7 +434,7 @@ compose_binaries(Traces) ->
              {_,A} = lists:keyfind(SourcePid,1,Traces),
              PreContextBinaries = 
                lists:usort(defined_in_call(SourcePid,StartTime,EndTime,A)),
-             io:format("num of precontextbinaries is ~p~n",
+             ?LOG_DEBUG("num of precontextbinaries is ~p~n",
                        [length(PreContextBinaries)]),
              FirstTimeSeen =
                case is_consumed(Register) of
@@ -457,17 +453,17 @@ compose_binaries(Traces) ->
                           true
                       end
                   end, PreContextBinaries),
-             ?LOG
+             ?LOG_DEBUG
                ("number of binaries is ~p:~n~p~n~n",
                 [length(ContextBinaries),ContextBinaries]),
-             ?LOG
+             ?LOG_DEBUG
                ("Limits ~p~n",
                 [{StartTime,EndTime}]),
              case rewriteTo(Binary,ContextBinaries) of
                false ->
                  case is_consumed(Register) of
                    true ->
-                     io:format
+                     ?LOG_DEBUG
                        ("~n*** Warning: the binary~n~p~nis not explainable"
                         ++" from the context~n~p~n",
                         [Binary,ContextBinaries]);
@@ -499,7 +495,7 @@ defined_in_call(Pid,FromTime,ToTime,A) ->
   Size = array:size(A),
   if
     (FromTime > ToTime) or (ToTime > Size) ->
-      io:format
+      ?LOG_DEBUG
         ("~n*** Error: incorrect parameters ~p -> ~p when ~p~n",
          [FromTime,ToTime,Size]),
       error(bad);
@@ -509,7 +505,7 @@ defined_in_call(Pid,FromTime,ToTime,A) ->
 defined_in_call(Pid,FromTime,ToTime,Skip,Size,A) ->
   if
     FromTime > ToTime ->
-      io:format
+      ?LOG_DEBUG
         ("~n*** Error: defined_in_call(~p,~p)~n",
          [FromTime,ToTime]),
       error(bad);
@@ -552,14 +548,14 @@ defined_in_call(Pid,FromTime,ToTime,Skip,Size,A) ->
   end.
 
 call_to(Item,_MFA,[]) ->
-  io:format
+  ?LOG_DEBUG
     ("~n*** Error: call ~p~nwithout return~n",
      [Item]),
   error(bad);
 call_to(Item,MFA,Skip=[{Item2,MFA1}|Rest]) ->
   if
     MFA =/= MFA1 ->
-      io:format
+      ?LOG_DEBUG
         ("~n*** Warning: calling ~p~nto wrong return ~p~n",
          [Item,Item2]),
       Skip;
@@ -569,14 +565,14 @@ call_to(Item,MFA,Skip=[{Item2,MFA1}|Rest]) ->
   end.
 
 return_from(Item,_MFA,[]) ->
-  io:format
+  ?LOG_DEBUG
     ("~n*** Error: return ~p~nwithout call~n",
      [Item]),
   error(bad);
 return_from(Item,MFA,Skip=[{Item2,MFA1}|Rest]) ->
   if
     MFA =/= MFA1 ->
-      io:format
+      ?LOG_DEBUG
         ("~n*** Warning: returning ~p~nto wrong call ~p~n",
          [Item,Item2]),
       Skip;
@@ -588,7 +584,7 @@ return_from(Item,MFA,Skip=[{Item2,MFA1}|Rest]) ->
 return_of_function(Pid,I,A) ->
   return_of_function(Pid,I,[],array:size(A),A).
 return_of_function(_Pid,I,Skip,Size,_A) when I>=Size ->
-  io:format
+  ?LOG_DEBUG
     ("~n*** Warning: could not find return loc, skip:~n~p~n",
      [Skip]),
   Size-1;
@@ -618,13 +614,13 @@ return_of_function(Pid,I,Skip,Size,A) ->
 call_of_function(Pid,I,A) ->
   call_of_function(Pid,I,[],array:size(A),A).
 call_of_function(_Pid,-1,Skip,Size,_A) ->
-  io:format
+  ?LOG_DEBUG
     ("~n*** Warning: could not find call loc, skip:~n~p~n",
      [Skip]),
   Size-1;
 call_of_function(Pid,I,Skip,Size,A) ->
   Item = array:get(I,A),
-  %%io:format("~p: cof(~p,~p)~n",[I,Skip,Item]),
+  %%?LOG_DEBUG("~p: cof(~p,~p)~n",[I,Skip,Item]),
   case Item of
     {trace_ts, Pid, call, {M,F,Args}, _} ->
       if
@@ -643,8 +639,8 @@ call_limits(Pid,I,Traces) ->
   {_,A} = lists:keyfind(Pid,1,Traces),
   CallSite = call_of_function(Pid,I-1,A), 
   ReturnSite = return_of_function(Pid,I,A),
-  ?LOG("call_limits(~p) = {~p,~p}~n",[I,CallSite,ReturnSite]),
-  io:format
+  ?LOG_DEBUG("call_limits(~p) = {~p,~p}~n",[I,CallSite,ReturnSite]),
+  ?LOG_DEBUG
     ("pos=~p~nCallsite=~p~nReturnsite=~p~n",
      [array:get(I,A),array:get(CallSite,A),array:get(ReturnSite,A)]),
   {CallSite,ReturnSite}.
@@ -685,9 +681,9 @@ read_messages_collect(Trace,NF,BsP,CntP) ->
      end, 
      Trace,
      fun ({ok,_,Payload},Time,{Bs,Cnt},_,_) ->
-         io:format("~nwill expand ~p~n",[Payload]),
+         ?LOG_DEBUG("~nwill expand ~p~n",[Payload]),
          {PayloadTerm,NewBinaries,NewCounter} = expand_term(Payload,Bs,Cnt,NF),
-         io:format("~npayload ~p~n",[PayloadTerm]),
+         ?LOG_DEBUG("~npayload ~p~n",[PayloadTerm]),
          {PayloadTerm,{NewBinaries,NewCounter}}
      end,
      {BsP,CntP}).
@@ -702,10 +698,10 @@ gen_tcp_send_collect(Trace,NF,BsP,CntP) ->
      end, 
      Trace,
      fun (Call,Time,{Bs,Cnt},_,_) ->
-         io:format("~nwill expand ~p~n",[Call]),
+         ?LOG_DEBUG("~nwill expand ~p~n",[Call]),
          {ExpandedCall={_M,_F,Args},NewBinaries,NewCounter} = 
            expand_term(Call,Bs,Cnt,NF),
-         io:format("~nsent ~p~n",[Args]),
+         ?LOG_DEBUG("~nsent ~p~n",[Args]),
          {Args,{NewBinaries,NewCounter}}
      end,
      {BsP,CntP}).
@@ -720,7 +716,7 @@ send_collect(Trace,NF,BsP,CntP) ->
      end, 
      Trace,
      fun (Call,Time,{Bs,Cnt},_,_) ->
-         io:format("~nwill expand ~p~n",[Call]),
+         ?LOG_DEBUG("~nwill expand ~p~n",[Call]),
          {ExpandedCall={_M,_F,Args},NewBinaries,NewCounter} = 
            expand_term(Call,Bs,Cnt,NF),
          {Args,{NewBinaries,NewCounter}}
@@ -759,7 +755,7 @@ collect_at_event(EventRecognizer,I,Size,A,F,Arg) ->
 %% functions with side effects.
 %% These include, for instance, functions to generate new keypairs (from nothing).
 expand_term(T,Binaries,Counter,NF) ->
-  io:format("expand_term(~p)~n",[T]),
+  ?LOG_DEBUG("expand_term(~p)~n",[T]),
   case lists:keyfind(T,1,Binaries) of
     {_T, Value} ->
       {Value, Binaries, Counter};
@@ -809,7 +805,7 @@ expand_term(T,Binaries,Counter,NF) ->
                       true = (CallAndReturn =/= false),
                       if
                         CallAndReturn=/=Call ->
-                          ?LOG
+                          ?LOG_DEBUG
                             ("Extractor=~p~n",
                              [CallAndReturn]);
                         true -> ok
@@ -882,7 +878,7 @@ extract_return_value_from_tuple(B,I,[First|Rest],Call) ->
   end.
 
 print_call({_,F,Args}) ->
-  %%io:format("~p(~p)~n",[F,Args]),
+  %%?LOG_DEBUG("~p(~p)~n",[F,Args]),
   io_lib:format("~p(~s)",[F,print_args(Args)]).
 
 print_full_call({M,F,Args}) ->
@@ -930,19 +926,19 @@ graphviz_traceback(Filename,Traceback,N,PredefinedBinaries,Counter,NF) ->
               element(2,expand_term(TCall,[],Counter,NF))) ++ T
        end, [], States),
   {ok,F} = file:open(Filename,[write]),
-  io:format(F,"digraph example {\n",[]),
+  ?LOG_DEBUG(F,"digraph example {\n",[]),
   lists:foreach(fun ({_,{state,I,{_,Fun,_},_}}) ->
                     if
                       I=/=0 -> 
-                        io:format(F,"s~p [label=\"~p\"];~n",[I,Fun]);
+                        ?LOG_DEBUG(F,"s~p [label=\"~p\"];~n",[I,Fun]);
                       true ->
                         ok
                     end
                 end, States),
   lists:foreach(fun ({From,Binary,To}) ->
-                    io:format(F,"s~p -> s~p [label=\"~p\"]~n",[From,To,Binary])
+                    ?LOG_DEBUG(F,"s~p -> s~p [label=\"~p\"]~n",[From,To,Binary])
                 end, Transitions),
-  io:format(F,"}\n",[]),
+  ?LOG_DEBUG(F,"}\n",[]),
   file:close(F).
 
 make_transition(From,Binary,States) ->
@@ -986,7 +982,7 @@ register_binary(Binary,Reg,Pre) ->
         OldRegType==consumed, IsRegOlder ->
           signal_extract_utils:put(Binary,Reg#binary{name=OldReg#binary.name});
         OldRegType==produced, IsRegOlder ->
-          io:format
+          ?LOG_DEBUG
             ("~n*** Warning: item ~p~nconsumed before produced:~n~p~n",
              [OldReg,Reg]),
           error(bad);
@@ -1112,7 +1108,7 @@ print_array(A,WithRegister) ->
 print_array(_,I,Size,_WithRegister) when I>=Size ->
   ok;
 print_array(A,I,Size,WithRegister) ->
-  io:format("~p: ~p~n",[I,subst_with_register(array:get(I,A))]),
+  ?LOG_DEBUG("~p: ~p~n",[I,subst_with_register(array:get(I,A))]),
   print_array(A,I+1,Size,WithRegister).
 
 print_binary_register() ->
@@ -1125,7 +1121,7 @@ print_binary_register() ->
          case Type of
            produced ->
              Return = return(Register),
-             io:format
+             ?LOG_DEBUG
                ("~n~p : ~p@~p -- ~p ==> ~n  ~p == ~n  ~w~n",
                 [Name,
                  Type,
@@ -1134,7 +1130,7 @@ print_binary_register() ->
                  subst_with_register(item(Return)),
                  Binary]);
            rewrite ->
-             io:format
+             ?LOG_DEBUG
                ("~n~p : ~p@~p -- ~p == ~n  ~w~n",
                 [Name,
                  Type,
@@ -1142,7 +1138,7 @@ print_binary_register() ->
                  subst_with_register(value(Register)),
                  Binary]);
            _ ->
-             io:format
+             ?LOG_DEBUG
                ("~n~p : ~p@~p -- ~p == ~n  ~w~n",
                 [Name,
                  Type,
@@ -1153,7 +1149,7 @@ print_binary_register() ->
      end, 
      lists:sort
        (fun ({_,R1},{_,R2}) -> 
-            io:format("R1=~p~nR2=~p~n",[R1,R2]),
+            ?LOG_DEBUG("R1=~p~nR2=~p~n",[R1,R2]),
             loc(source(R1)) < loc(source(R2)) 
         end,
         registers())).
@@ -1185,14 +1181,14 @@ rewriteTo(Binary,Binaries,Operators) ->
        Operators),
   case Solutions of
     [] -> 
-      ?LOG
+      ?LOG_DEBUG
         ("No explanation found using~n~p~n",
          [Binaries]),
       false;
     [Sol] -> 
       verify_solution(Sol,Binary,Binaries);
     Sols ->
-      ?LOG
+      ?LOG_DEBUG
         ("Multiple solutions found using~n~p~nAlts=~p~n",
          [Binaries,Sols]),
       hd(lists:sort(fun le_rewrites/2,Sols))
@@ -1210,14 +1206,14 @@ verify_solution(Sol={M,F,Args},Binary,Binaries) ->
         true -> 
           Sol;
         false ->
-          io:format
+          ?LOG_DEBUG
             ("~n*** Error: the solution~n  ~p~n contains binaries"
              ++" not available in the context~n  ~p~n",
              [Sol,Binaries]),
           error(bad)
       end;
     false ->
-      io:format
+      ?LOG_DEBUG
         ("~n*** Error: rewrite solution~n  ~p~nis not equal to ~p~n",
          [Sol,Binary]),
       error(bad)
@@ -1291,7 +1287,7 @@ occurs_check(Binary,Candidate) ->
       false;
     true ->
       CandidateRegister = get_binary(Candidate),
-      ?LOG("reg=~p~n",[CandidateRegister]),
+      ?LOG_DEBUG("reg=~p~n",[CandidateRegister]),
       case (CandidateRegister =/= undefined) 
         andalso binary_type(CandidateRegister)==rewrite of
         true ->

@@ -1,5 +1,6 @@
 -module(run_noise).
 
+-include_lib("kernel/include/logger.hrl").
 -compile(export_all).
 
 
@@ -155,11 +156,10 @@ handshake_and_send(HandshakeType,DHType,CryptoType,HashType,Message) ->
   {ok,CryptoParms} = find_crypto_parms(CryptoType),
   {ok,HashParms} = find_hash_parms(HashType),
   ProtocolParms = [{'PROTOCOL-NAME',protocol_name(HandshakeType, DHType, CryptoType, HashType)}],
-  io:format
+  ?LOG_INFO
     ("Protocol name is ~p~n",
      [proplists:get_value('PROTOCOL-NAME',ProtocolParms)]),
   Parms = DHParms ++ CryptoParms ++ HashParms ++ ProtocolParms,
-
   Prologue = echo_noise:find_echo_prologue(HandshakeType,DHType,CryptoType,HashType),
   {Results,{CS1,CS2},State} =
     noise:execute_handshake
@@ -187,8 +187,8 @@ handshake_and_send(HandshakeType,DHType,CryptoType,HashType,Message) ->
         subst(lists:last(PayloadBuffers),Subst)
     end,
 
-  io:format("SendTerm:~n~p~n",[SendTerm]),
-  io:format("PayloadTerm:~n~p~n",[PayloadTerm]),
+  ?LOG_INFO("SendTerm:~n~p~n",[SendTerm]),
+  ?LOG_INFO("PayloadTerm:~n~p~n",[PayloadTerm]),
 
   {
     SendTerm,

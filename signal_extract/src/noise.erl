@@ -1,16 +1,11 @@
 -module(noise).
 
+-include_lib("kernel/include/logger.hrl").
+
 -export([execute_handshake/5]).
 -export(['MERGE'/2,'PROTOCOL-NAME'/0,'LOCAL_STATIC'/0,'STORE-KEYPAIR'/1]).
 -export([encryptWithAd/3]).
 
-%%-define(debug,true).
--ifdef(debug).
--define(LOG(X,Y),
-	io:format("~p(~p): ~s",[?MODULE,self(),io_lib:format(X,Y)])).
--else.
--define(LOG(X,Y),true).
--endif.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
@@ -259,7 +254,7 @@ encryptAndHash(PlainText,SymmetricState) ->
   {CipherText,SymmetricStateH}.
 
 decryptAndHash(CipherText,SymmetricState) ->
-  io:format("decryptAndHash(~p) key=~p~n",[CipherText,(SymmetricState#symmetricState.cipherState)#cipherState.k]),
+  ?LOG_DEBUG("decryptAndHash(~p) key=~p~n",[CipherText,(SymmetricState#symmetricState.cipherState)#cipherState.k]),
   {PlainText,SymmetricState1} = 
     return_and_modify_cipherState
       (fun (CS) -> decryptWithAd(SymmetricState#symmetricState.h,CipherText,CS) end,
@@ -315,7 +310,7 @@ initialize(ProtocolName,Handshake,Initiator,Prologue,S,E,RS,RE) ->
   PublicKeys = 
     extractPublicKeysFromPreMessages(Initiator, Handshake),
 
-  io:format("Public keys are ~p~n",[PublicKeys]),
+  ?LOG_DEBUG("Public keys are ~p~n",[PublicKeys]),
 
   HandshakeState7 = 
     lists:foldl
@@ -365,7 +360,7 @@ writeMessage(Message,HS) ->
         end,
       modify_symmetricState(fun (SS) -> mixKey(Term,SS) end, HS);
     se ->
-      io:format("se: initiator=~p s=~p~n",[HS#handshakeState.initiator,key_value(s,HS)]),
+      ?LOG_DEBUG("se: initiator=~p s=~p~n",[HS#handshakeState.initiator,key_value(s,HS)]),
       Term = 
         if
           IsInitiator ->
@@ -393,7 +388,7 @@ message_append(Msg,HandshakeState) ->
     {output_buffer=HandshakeState#handshakeState.output_buffer++[Msg]}.
 
 readMessage(Message,HS) ->
-  io:format("readMessage(~p) Initiator=~p ~n",[Message,HS#handshakeState.initiator]),
+  ?LOG_DEBUG("readMessage(~p) Initiator=~p ~n",[Message,HS#handshakeState.initiator]),
   IsInitiator = HS#handshakeState.initiator,
   case Message of
     e ->
@@ -424,7 +419,7 @@ readMessage(Message,HS) ->
            }
       end;
     ee ->
-      io:format("ee: ~p~nand ~p~n",[key_value(e,HS),key_value(re,HS)]),
+      ?LOG_DEBUG("ee: ~p~nand ~p~n",[key_value(e,HS),key_value(re,HS)]),
       Term = 'DH'(key_value(e,HS),key_value(re,HS)),
       modify_symmetricState(fun (SS) -> mixKey(Term,SS) end, HS);
     es ->
@@ -451,16 +446,16 @@ readMessage(Message,HS) ->
   end.
 
 readMessages([],HS) ->
-  io:format("readMessages([])~n"),
+  ?LOG_DEBUG("readMessages([])~n"),
   InputBuffer = HS#handshakeState.input_buffer,
   PayloadToDecrypt = 'READ'('SIZE'(InputBuffer),InputBuffer),
   {DecryptedTerm,HS0} = 
     return_and_modify_symmetricState
       (fun (SS) -> decryptAndHash(PayloadToDecrypt,SS) end, HS),
-  io:format("payload term is ~p~n",[DecryptedTerm]),
+  ?LOG_DEBUG("payload term is ~p~n",[DecryptedTerm]),
   HS0#handshakeState{payload_buffer=DecryptedTerm};
 readMessages([Message|Messages],HandshakeState) ->
-  io:format("readMessages(~p)~n",[[Message|Messages]]),
+  ?LOG_DEBUG("readMessages(~p)~n",[[Message|Messages]]),
   HS = readMessage(Message,HandshakeState),
   readMessages(Messages,HS).
 
@@ -483,7 +478,7 @@ execute_handshake([MessagePattern|RestMessagePatterns],State) ->
   {[Result|Results],Split,FinalState}.
 
 execute_message_pattern(MessagePattern,State) ->
-  io:format("execute_message_pattern(~p)~n",[MessagePattern]),
+  ?LOG_DEBUG("execute_message_pattern(~p)~n",[MessagePattern]),
   HS = State#state.handshakeState,
   IsInitiator = HS#handshakeState.initiator,
   Messages = 
@@ -563,7 +558,7 @@ key_value(Key,HS) ->
     end,
   if
     Value==undefined ->
-      io:format("~n*** Error: undefined key ~p~n",[Key]),
+      ?LOG_DEBUG("~n*** Error: undefined key ~p~n",[Key]),
       error(bad);
     true -> Value
   end.

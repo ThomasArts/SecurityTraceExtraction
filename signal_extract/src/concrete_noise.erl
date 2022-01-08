@@ -8,6 +8,8 @@
 
 -module(concrete_noise).
 
+-include_lib("kernel/include/logger.hrl").
+
 -compile([export_all, nowarn_export_all]).
 
 'MERGE'(Bin1, Bin2) ->
@@ -32,7 +34,7 @@
 %%      {enacl, crypto_sign_ed25519_public_to_curve25519, 
 %%       [{signal_binary_ops, extract, [KeyPair, 32, 32]}]};
     _ ->
-      io:format("public_key(~p) nyi~n",[X]),
+      ?LOG_DEBUG("public_key(~p) nyi~n",[X]),
       throw(nyi)
   end.
 
@@ -72,7 +74,7 @@
         _ -> {'XOR',[B1,B2]}
       end;
     {A,B} -> 
-      io:format("computed sizes ~p and ~p for~n~p~nand ~p~n",[A,B,B1,B2]),
+      ?LOG_DEBUG("computed sizes ~p and ~p for~n~p~nand ~p~n",[A,B,B1,B2]),
       {'XOR',[B1,B2]}
   end.
 
@@ -85,7 +87,7 @@
 %%            PaddedBinSize when is_integer(PaddedBinSize) ->
 %%              {signal_binary_ops,pad,[PaddedBin,Using,Upto-PaddedBinSize]};
 %%            undefined ->
-%%              io:format("Weird! Bin is ~p~n",[Bin]),
+%%              ?LOG_DEBUG("Weird! Bin is ~p~n",[Bin]),
 %%              {'PAD_TO_USING',[Bin,Upto,Using]}
 %%          end;
 %%        _ -> 
