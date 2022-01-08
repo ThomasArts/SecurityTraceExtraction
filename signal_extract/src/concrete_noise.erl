@@ -8,10 +8,10 @@
 
 -module(concrete_noise).
 
+-include_lib("kernel/include/logger.hrl").
+
 -compile([export_all, nowarn_export_all]).
 
-'WriteMessage'(X) ->
-    {signal_binary_ops, merge, X}.
 'MERGE'(Bin1, Bin2) ->
   if
     is_binary(Bin2), byte_size(Bin2)==1 ->
@@ -20,17 +20,37 @@
       {signal_binary_ops, merge, [Bin1, Bin2]}
   end.
 
+'STORE-KEYPAIR'(X) ->
+  throw(nyi).
+
 'PUBLIC-KEY'(X) ->
-  {enacl, crypto_sign_ed25519_public_to_curve25519, 
-   [{signal_binary_ops, extract, [X, 32, 32]}]}.
+  case X of
+    {'STORE-PUBLIC-KEY', [Key]}-> 
+      Key;
+    {'STORE-KEYPAIR', [KeyPair]} ->
+      {enacl, crypto_sign_ed25519_public_to_curve25519, 
+       [{signal_binary_ops, extract, [KeyPair, 32, 32]}]};
+%%    {maps,get,[secret,KeyPair={enacl,crypto_sign_ed25519_keypair,[Id]}]} ->
+%%      {enacl, crypto_sign_ed25519_public_to_curve25519, 
+%%       [{signal_binary_ops, extract, [KeyPair, 32, 32]}]};
+    _ ->
+      ?LOG_DEBUG("public_key(~p) nyi~n",[X]),
+      throw(nyi)
+  end.
 
 'PRIVATE-KEY'(X) ->
-  {enacl, crypto_sign_ed25519_secret_to_curve25519, [X]}.
+  case X of
+    {'STORE-KEYPAIR', [KeyPair]}-> 
+      {enacl, crypto_sign_ed25519_secret_to_curve25519, [KeyPair]};
+    {'STORE-PRIVATE-KEY', [Key]} ->
+      Key
+  end.
 
-%% This looks weird, why generate a key pair and then only take the secret key
-%% But the code uses the secret key to extract the public key from.
 'GENERATE_KEYPAIR'(X) ->
   {maps, get, [secret, {enacl, crypto_sign_ed25519_keypair, [X]}]}.
+
+'DECRYPT'(X, Nonce, Ad, Payload) ->
+  {enacl, aead_chacha20poly1305_decrypt, [X, Nonce, Ad, Payload]}.
 
 'ENCRYPT'(X, Nonce, Y, Payload) ->
   {enacl, aead_chacha20poly1305_encrypt, [X, Nonce, Y, Payload]}.
@@ -41,7 +61,6 @@
 'TRUNCATE'(Bin, Length) ->
   {signal_binary_ops, truncate, [Bin, Length]}.
 
-%% We could possibly get matching as primitives in this specification language
 'HASH'(T) ->
   {erlang, element, [2, {enacl,generichash, [64, T]}]}.
 
@@ -55,12 +74,11 @@
         _ -> {'XOR',[B1,B2]}
       end;
     {A,B} -> 
-      io:format("computed sizes ~p and ~p for~n~p~nand ~p~n",[A,B,B1,B2]),
+      ?LOG_DEBUG("computed sizes ~p and ~p for~n~p~nand ~p~n",[A,B,B1,B2]),
       {'XOR',[B1,B2]}
   end.
 
 'PAD_TO_USING'(Bin, Upto, Using) ->
-  io:format("PAD is ~p~n",[Bin]),
   case bin_size(Bin) of
     BinSize when is_integer(BinSize) ->
 %%      case Bin of
@@ -69,14 +87,13 @@
 %%            PaddedBinSize when is_integer(PaddedBinSize) ->
 %%              {signal_binary_ops,pad,[PaddedBin,Using,Upto-PaddedBinSize]};
 %%            undefined ->
-%%              io:format("Weird! Bin is ~p~n",[Bin]),
+%%              ?LOG_DEBUG("Weird! Bin is ~p~n",[Bin]),
 %%              {'PAD_TO_USING',[Bin,Upto,Using]}
 %%          end;
 %%        _ -> 
       {signal_binary_ops,pad,[Bin,Using,Upto-BinSize]};
 %%      end;
     undefined ->
-      io:format("Bin is ~p~n",[Bin]),
       {'PAD_TO_USING',[Bin,Upto,Using]}
   end.
 
