@@ -1,5 +1,7 @@
 -module(signal_extract_utils). 
 
+-include_lib("kernel/include/logger.hrl").
+
 -export([put/2,get/1,to_list/0,ensure_open/0,open_clean_db/0]).
 -export([cmd/1,cmd_with_status/1]).
 
@@ -55,7 +57,7 @@ cmd(Command) ->
   {Status,Result} = cmd_with_status(Command),
   if
     Status =/= 0 ->
-      io:format
+      ?LOG_ERROR
         ("command ~s failed with exit code ~p:~n  ~s~n",
          [Command,Status,Result]),
       error({bad,Command,Status});

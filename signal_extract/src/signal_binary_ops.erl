@@ -1,6 +1,7 @@
 -module(signal_binary_ops).
 
 -export([merge/1,merge/2,extract/3,pad/3,pad_to_size/3,xor_words_with_const/2]).
+-export([prefix_len/1]).
 
 merge([]) ->
   <<>>;
@@ -35,4 +36,6 @@ pad0(Binary,_Symbol,0) ->
 pad0(Binary,Symbol,N) when N>0 ->
   pad0(<<Binary/binary,Symbol>>,Symbol,N-1).
 
-  
+prefix_len(Binary) ->  
+  <<(byte_size(Binary)):16, Binary/binary>>.
+
