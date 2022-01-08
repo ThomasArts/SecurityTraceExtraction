@@ -24,12 +24,12 @@ Obtaining a trace and analyzing it
 
    $ rebar3 as test shell
 
-
    > signal_extract:noisy_trace("enoise.trace").         % Saves trace in file enoise.trace
-
 
    > signal_extract:analyze_trace_file("enoise.trace").  % Analyzes trace file
    
- 
+
+As an option try out check:check() function which checks a worked through example.
+
 
 
