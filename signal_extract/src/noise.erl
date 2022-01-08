@@ -1,5 +1,8 @@
 -module(noise).
 
+%% A symbolic semantics for Noise protocols, written in Erlang.
+%%
+
 -include_lib("kernel/include/logger.hrl").
 
 -export([execute_handshake/5]).

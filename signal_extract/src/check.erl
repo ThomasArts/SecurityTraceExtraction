@@ -1,5 +1,7 @@
 -module(check).
 
+%% Checks a worked out example.
+
 -compile(export_all).
 
 check_and_generate(Handshake,DH,Crypto,Hash) ->
