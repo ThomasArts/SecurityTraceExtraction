@@ -1415,15 +1415,3 @@ xor_const() ->
          end
      end).
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-test() ->
-  {{Ts,Ss},{Tp,Sp}} = signal_extract_concretize:read(), 
-  {Diffs,Subs} = signal_extract_concretize:start(Ss,Ts), 
-  io:format("~n~nComparison output:~n~p~nSubstitution:~n~p~n",[Diffs,Subs]), 
-  lists:foreach(fun ({T1,T2}) -> io:format("~n Subst: ~p~nand ~p~n",[T1,T2]) end, Subs), 
-  {Diffp,Subp} = signal_extract_concretize:start(Sp,Tp), 
-  io:format("~n~nComparison payload:~n~p~nSubstitution:~n~p~n",[Diffp,Subp]), 
-  lists:foreach(fun ({T1,T2}) -> io:format("~n Subst: ~p~nand ~p~n",[T1,T2]) end, Subp).
-
-%% signal_extract:noisy_trace("XN","25519","ChaChaPoly","BLAKE2b","enoise.trace").
