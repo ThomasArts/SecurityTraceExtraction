@@ -15,11 +15,14 @@ check(Handshake,DH,Crypto,Hash,TraceFile) ->
   
   {SendDiff,SendSub} = compare:compare(SemanticSend,TraceSend),
   io:format("~n~nSend Comparison:~n~p~nSubstitution:~n~p~n",[SendDiff,SendSub]), 
-  lists:foreach(fun ({T1,T2}) -> io:format("~n Send Subst: ~p~nand ~p~n",[T1,T2]) end, SendSub), 
+  io:format("~nSend substitution:~n**************************~n~n"),
+  lists:foreach(fun ({T1,T2}) -> io:format("~p~nDIFFERS FROM~n~p~n~n",[T1,T2]) end, SendSub), 
 
   {PayloadDiff,PayloadSub} = compare:compare(SemanticPayload,TracePayload),
   io:format("~n~nPayload Comparison:~n~p~nSubstitution:~n~p~n",[PayloadDiff,PayloadSub]), 
-  lists:foreach(fun ({T1,T2}) -> io:format("~n Payload Subst: ~p~nand ~p~n",[T1,T2]) end, PayloadSub).
+  io:format("~n"),
+  io:format("~nPayload substitution:~n*************************~n~n"),
+  lists:foreach(fun ({T1,T2}) -> io:format("~p~nDIFFERS FROM~n~p~n~n",[T1,T2]) end, PayloadSub).
 
 test() ->
   check_and_generate("XK","25519","ChaChaPoly","BLAKE2b").
