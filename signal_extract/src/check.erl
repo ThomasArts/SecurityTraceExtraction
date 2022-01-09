@@ -30,5 +30,7 @@ test() ->
 check() ->
   check("XK","25519","ChaChaPoly","BLAKE2b","enoise.trace").
 
+check(FileName) ->
+  check("XK","25519","ChaChaPoly","BLAKE2b",FileName).
 
 

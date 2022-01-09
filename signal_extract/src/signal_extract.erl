@@ -2,7 +2,7 @@
 
 -include_lib("kernel/include/logger.hrl").
 
--export([noisy_trace/0,noisy_trace/5]).
+-export([noisy_trace/1,noisy_trace/5]).
 -export([register_binaries/3,trace_make_call_deterministic/1]).
 -export([get_traces/1,compose_binaries/1,print_array/2]).
 -export([print_binary_register/0,show_trace/1,show_registered_trace/1]).
@@ -18,8 +18,8 @@
 
 %% rebar3 as test shell
 
-noisy_trace() ->
-  noisy_trace("XK","25519","ChaChaPoly","BLAKE2b","enoise.trace").
+noisy_trace(File) ->
+  noisy_trace("XK","25519","ChaChaPoly","BLAKE2b",File).
 
 noisy_trace(Handshake,DH,Crypto,Hash,TraceFileName) ->
   EnoiseModules = 
