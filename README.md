@@ -29,7 +29,7 @@ Obtaining a trace and analyzing it
    > signal_extract:analyze_trace_file("enoise.trace").  % Analyzes trace file
    
 
-As an option try out check:check() function which checks a worked through example.
+As an alternative try the check:check_and_generate(Handshake,TraceFileName) function which checks a worked through example.
 
 
 

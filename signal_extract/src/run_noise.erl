@@ -156,8 +156,8 @@ handshake_and_send(HandshakeType,DHType,CryptoType,HashType,Message) ->
   {ok,CryptoParms} = find_crypto_parms(CryptoType),
   {ok,HashParms} = find_hash_parms(HashType),
   ProtocolParms = [{'PROTOCOL-NAME',protocol_name(HandshakeType, DHType, CryptoType, HashType)}],
-  ?LOG_INFO
-    ("Protocol name is ~p~n",
+  io:format
+    ("Running noise protocol ~p~n",
      [proplists:get_value('PROTOCOL-NAME',ProtocolParms)]),
   Parms = DHParms ++ CryptoParms ++ HashParms ++ ProtocolParms,
   Prologue = echo_noise:find_echo_prologue(HandshakeType,DHType,CryptoType,HashType),

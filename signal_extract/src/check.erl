@@ -4,8 +4,7 @@
 
 -compile(export_all).
 
-check_and_generate(Handshake,DH,Crypto,Hash) ->
-  TraceFile = "enoise.trace",
+check_and_generate(Handshake,DH,Crypto,Hash,TraceFile) ->
   signal_extract:noisy_trace(Handshake,DH,Crypto,Hash,TraceFile),
   check(Handshake,DH,Crypto,Hash,TraceFile).
 
@@ -24,13 +23,18 @@ check(Handshake,DH,Crypto,Hash,TraceFile) ->
   io:format("~nPayload substitution:~n*************************~n~n"),
   lists:foreach(fun ({T1,T2}) -> io:format("~p~nDIFFERS FROM~n~p~n~n",[T1,T2]) end, PayloadSub).
 
-test() ->
-  check_and_generate("XK","25519","ChaChaPoly","BLAKE2b").
-
 check() ->
   check("XK","25519","ChaChaPoly","BLAKE2b","enoise.trace").
 
 check(FileName) ->
   check("XK","25519","ChaChaPoly","BLAKE2b",FileName).
 
+check_and_generate(FileName) ->
+  check_and_generate("XK",FileName).
+
+check_and_generate(Handshake,FileName) ->
+  check_and_generate(Handshake,"25519","ChaChaPoly","BLAKE2b",FileName).
+
+
+  
 
