@@ -26,6 +26,9 @@ check(Handshake,DH,Crypto,Hash,TraceFile) ->
 check() ->
   check("XK","25519","ChaChaPoly","BLAKE2b","enoise.trace").
 
+check2() ->
+  check_and_generate("XK","25519","ChaChaPoly","SHA512","enoise2.trace").
+
 check(FileName) ->
   check("XK","25519","ChaChaPoly","BLAKE2b",FileName).
 

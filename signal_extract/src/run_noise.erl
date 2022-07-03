@@ -47,6 +47,12 @@ find_crypto_parms("ChaChaPoly") ->
   {ok,[]}.
 
 find_hash_parms("BLAKE2b") ->
+  {ok,[{'HASHLEN',64}, {'BLOCKLEN',128}]};
+find_hash_parms("BLAKE2s") ->
+  {ok,[{'HASHLEN',32}, {'BLOCKLEN',64}]};
+find_hash_parms("SHA256") ->
+  {ok,[{'HASHLEN',32}, {'BLOCKLEN',64}]};
+find_hash_parms("SHA512") ->
   {ok,[{'HASHLEN',64}, {'BLOCKLEN',128}]}.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
