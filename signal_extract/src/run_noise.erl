@@ -20,6 +20,14 @@ find_handshake(HandshakeName) ->
          {snd,[s,se]}
         ]
       };
+    HandshakeName == "IK" ->
+      {
+        [{rcv,[s]}],
+        [
+         {snd,[e,es,s,ss]},
+         {rcv,[e,ee,se]}
+        ]
+      };
     HandshakeName == "XN" ->
       {
         [],
@@ -36,6 +44,17 @@ find_handshake(HandshakeName) ->
          {snd,[e]},
          {rcv,[e,ee,s,es]},
          {snd,[s,se]}
+        ]
+      };
+    HandshakeName == "KK" ->
+      {
+        [
+         {snd,[s]},
+         {rcv,[s]}
+        ],
+        [
+         {snd,[e,es,ss]},
+         {rcv,[e,ee,se]}
         ]
       }
   end.

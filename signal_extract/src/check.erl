@@ -40,6 +40,15 @@ check() ->
 check2() ->
   check_and_generate("XK","25519","ChaChaPoly","SHA512","enoise2.trace").
 
+check3() ->
+  check_and_generate("IK","25519","ChaChaPoly","SHA512","enoise2.trace").
+
+check4() ->
+  check_and_generate("XN","25519","ChaChaPoly","SHA512","enoise2.trace").
+
+check5() ->
+  check_and_generate("KK","25519","ChaChaPoly","SHA512","enoise2.trace").
+
 check(FileName) ->
   check("XK","25519","ChaChaPoly","BLAKE2b",FileName).
 
