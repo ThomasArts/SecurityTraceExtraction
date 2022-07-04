@@ -31,7 +31,7 @@ noisy_trace(Handshake,DH,Crypto,Hash,TraceFileName) ->
     ],
   LoadModules =
     [
-     enacl, enacl_nif, unicode_util, gen_tcp, inet_tcp, signal_extract_utils, gen, gen_server,
+     enacl, enacl_nif, unicode_util, gen_tcp, inet_tcp, signal_extract_utils, gen, gen_server, crypto,
      enoise_crypto_basics, signal_extract_utils, enoise_test, code, file, base64, io, get_key
     ],
   lists:foreach(fun code:ensure_loaded/1, EnoiseModules++LoadModules),
@@ -1414,3 +1414,46 @@ xor_const() ->
          end
      end).
 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+trace_to_prolog(TraceFile,PrologFile) ->
+  {ok,PF} = file:open(PrologFile,[write]),
+  {ok,B} = file:read_file(TraceFile),
+  {trace,L} = binary_to_term(B),
+  lists:foreach
+        (fun (Fact) ->
+           case Fact of
+             {trace_ts, Pid, call, {M,F,A}, TimeStamp} ->
+               io:format(PF,"event(~s,call(~s,~s,~s),~s).~n",[to_pid(Pid),value_to_prolog(M),value_to_prolog(F),value_to_prolog(A),timestamp_to_prolog(TimeStamp)]);
+             {trace_ts, Pid, return_from, {M,F,Arity}, Value, TimeStamp} ->
+               io:format(PF,"event(~s,return_from(~s,~s,~s,~s),~s).~n",[to_pid(Pid),value_to_prolog(M),value_to_prolog(F),value_to_prolog(Arity),value_to_prolog(Value),timestamp_to_prolog(TimeStamp)]);
+             {trace_ts, Pid, send, Msg, To, TimeStamp} ->
+               io:format(PF,"event(~s,send(~s,~s),~s).~n",[to_pid(Pid),value_to_prolog(Msg),value_to_prolog(To),timestamp_to_prolog(TimeStamp)]);
+             {trace_ts, Pid, exception_from, {M,F,Arity}, {Class,Reason}, TimeStamp} ->
+               io:format(PF,"event(~s,exception_from(~s,~s,~s,~s,~s),~s).~n",[to_pid(Pid),value_to_prolog(M),value_to_prolog(F),value_to_prolog(Arity),value_to_prolog(Class),value_to_prolog(Reason),timestamp_to_prolog(TimeStamp)]);
+             Event ->
+               io:format("Cannot translate event ~p yet~n",[Event]),
+               error(nyi)
+           end
+         end, L),
+   ok = file:close(PF).
+      
+value_to_prolog(V) ->
+  case V of
+    _ when is_pid(V) -> to_pid(V);
+    T when is_tuple(T) -> io_lib:format("tuple(~s)",[comma_list(lists:map(fun (E) -> value_to_prolog(E) end, tuple_to_list(T)))]);
+    [] -> "[]";
+    L when is_list(L) -> io_lib:format("[~s]",[comma_list(lists:map(fun (E) -> value_to_prolog(E) end, L))]);
+    _ -> io_lib:format("~p",[V])
+  end.
+
+comma_list([]) -> "";
+comma_list([Element]) -> Element;
+comma_list([First|Rest]) -> First ++ "," ++ comma_list(Rest).
+
+to_pid(P) -> io_lib:format("pid('~p')",[P]).
+
+timestamp_to_prolog({T1,T2,T3}) ->
+  io_lib:format("timestamp(~p,~p,~p)",[T1,T2,T3]).
+
+%% signal_extract:trace_to_prolog("enoise.trace","enoise.pl").
