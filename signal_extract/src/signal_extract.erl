@@ -1441,6 +1441,11 @@ trace_to_prolog(TraceFile,PrologFile) ->
 value_to_prolog(V) ->
   case V of
     _ when is_pid(V) -> to_pid(V);
+    _ when is_port(V) -> io_lib:format("port('~p')",[V]);
+    _ when is_map(V) -> io_lib:format("map(~s)",[value_to_prolog(maps:to_list(V))]);
+    _ when is_reference(V) -> io_lib:format("reference('~p')",[V]);
+    _ when is_function(V) -> io_lib:format("function('~p')",[V]);
+    _ when is_binary(V) -> io_lib:format("binary(~s)",[value_to_prolog(binary:bin_to_list(V))]);
     T when is_tuple(T) -> io_lib:format("tuple(~s)",[comma_list(lists:map(fun (E) -> value_to_prolog(E) end, tuple_to_list(T)))]);
     [] -> "[]";
     L when is_list(L) -> io_lib:format("[~s]",[comma_list(lists:map(fun (E) -> value_to_prolog(E) end, L))]);
