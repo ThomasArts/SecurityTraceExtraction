@@ -61,6 +61,8 @@ do_trace(TracedPid,ToPid,Modules) ->
                 timestamp,{tracer,ToPid}
                ]),
   erlang:trace_pattern({'_', '_', '_'}, [{'_', [], [{exception_trace},{return_trace}]}], [global]),
+  %% erlang:trace_pattern({'binary', '_', '_'}, [{'_', [], [{exception_trace},{return_trace}]}], [global]),
+  %% erlang:trace_pattern({'erlang', '_', '_'}, [{'_', [], [{exception_trace},{return_trace}]}], [global]),
   erlang:trace_pattern({enacl_nif, '_', '_'}, false, []),
   lists:foreach
     (fun (Module) -> 
