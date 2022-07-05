@@ -18,19 +18,18 @@ assume that it was downloaded in the directory ../noise-c. Next build signal_ext
 Obtaining a trace and analyzing it
 -----------------------------------
 
-   $ cd signal_extract
-   
-   $ bash scripts/start_noise_c.sh                       # Start the noise-c command in one shell
-
-   $ rebar3 shell                                        # Starts erlang in another shell
-
-   % Execute a protocol handshake using the XK pattern, save the resulting trace in
-   % enoise.trace, and analyse the resulting trace:
-   > check:check_and_generate("XK","25519","ChaChaPoly","BLAKE2b","enoise.trace"). 
+    $ cd signal_extract
+    
+    $ bash scripts/start_noise_c.sh                       # Start the noise-c command in one shell
+    $ rebar3 shell                                        # Starts erlang in another shell
+    
+    % Execute a protocol handshake using the XK pattern, save the resulting trace in
+    % enoise.trace, and analyse the resulting trace:
+    > check:check_and_generate("XK","25519","ChaChaPoly","BLAKE2b","enoise.trace"). 
 
 For more debugging output try instead:
-
-   $ rebar shell --config config/logger.config 
+    
+    $ rebar shell --config config/logger.config 
    
 
 
