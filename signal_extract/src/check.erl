@@ -7,6 +7,7 @@
 -compile(export_all).
 
 check_and_generate(Handshake,DH,Crypto,Hash,TraceFile) ->
+  io:format("TraceFile is ~p~n",[TraceFile]),
   signal_extract:noisy_trace(Handshake,DH,Crypto,Hash,TraceFile),
   dump_trace(TraceFile),
   check(Handshake,DH,Crypto,Hash,TraceFile).
@@ -56,8 +57,9 @@ check_and_generate(FileName) ->
   check_and_generate("XK",FileName).
 
 check_and_generate(Handshake,FileName) ->
+  io:format("~n~n======================================================================~n"),
+  io:format("Checking handshake ~s with trace output in ~s~n",[Handshake,FileName]),
   check_and_generate(Handshake,"25519","ChaChaPoly","BLAKE2b",FileName).
-
 
   
 

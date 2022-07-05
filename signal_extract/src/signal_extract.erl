@@ -159,6 +159,8 @@ analyze_trace_file(FileName) ->
      {get_key, get_key, 3}
     ],
   
+  signal_extract_utils:open_clean_db(),
+
   ?LOG_DEBUG("~n~nDeterminizing trace...~n"),
   DetTraces = 
     lists:map
@@ -426,7 +428,7 @@ compose_binaries(Traces) ->
                end,
                case lists:keyfind(SourcePid,1,Traces) of
                  false ->
-                   ?LOG_DEBUG
+                   io:format
                      ("~n*** Error: cannot find SourcePid ~p (from ~p) in traces???~n",
                       [SourcePid,Register]),
                    error(bad);

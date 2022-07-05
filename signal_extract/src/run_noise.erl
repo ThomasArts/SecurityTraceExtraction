@@ -23,7 +23,7 @@ find_handshake(HandshakeName) ->
       {
         [{snd,[s]}],
         [
-         {snd,[e,es]},
+         {snd,[e]},
          {rcv,[e,ee,se]}
         ]
       };
@@ -75,7 +75,7 @@ find_handshake(HandshakeName) ->
       {
         [],
         [
-         {snd,[e,es]},
+         {snd,[e,s]},
          {rcv,[e,ee,se]}
         ]
       };
