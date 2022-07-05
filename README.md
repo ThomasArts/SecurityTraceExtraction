@@ -1,4 +1,4 @@
-signal_extraction
+SecurityTraceExtraction
 =================
 
 Extracting behavioural descriptions from runs (Erlang traces) of security protocols.
