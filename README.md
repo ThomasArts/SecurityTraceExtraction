@@ -20,16 +20,19 @@ Obtaining a trace and analyzing it
 
    $ cd signal_extract
    
-   $ bash scripts/start_noise_c.sh                       # Starts noise-c command
+   $ bash scripts/start_noise_c.sh                       # Start the noise-c command in one shell
 
-   $ rebar3 as test shell
+   $ rebar3 shell                                        # Starts erlang in another shell
 
-   > signal_extract:noisy_trace("enoise.trace").         % Saves trace in file enoise.trace
+   % Execute a protocol handshake using the XK pattern, save the resulting trace in
+   % enoise.trace, and analyse the resulting trace:
+   > check:check_and_generate("XK","25519","ChaChaPoly","BLAKE2b","enoise.trace"). 
 
-   > signal_extract:analyze_trace_file("enoise.trace").  % Analyzes trace file
+For more debugging output try instead:
+
+   $ rebar shell --config config/logger.config 
    
 
-As an alternative try the check:check_and_generate(Handshake,TraceFileName) function which checks a worked through example.
 
 
 
