@@ -53,7 +53,8 @@ do_trace(TracedPid,ToPid,Modules) ->
                 set_on_spawn,
                 %%'receive',
                 send,
-                %% procs,ports, -- better not
+                procs,
+		ports,
                 %%return_to,
                 %% set_on_link,
                 %%arity,
