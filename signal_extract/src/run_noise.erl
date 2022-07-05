@@ -11,6 +11,74 @@ protocol_name(HandshakeName,DHType,CipherType,HashType) ->
 
 find_handshake(HandshakeName) ->
   if
+    HandshakeName == "NN" ->
+      {
+        [],
+        [
+	 {snd,[e]},
+         {rcv,[e,ee]}
+        ]
+      };
+    HandshakeName == "KN" ->
+      {
+        [{snd,[s]}],
+        [
+         {snd,[e,es]},
+         {rcv,[e,ee,se]}
+        ]
+      };
+    HandshakeName == "NK" ->
+      {
+        [{rcv,[s]}],
+        [
+         {snd,[e,es]},
+         {rcv,[e,ee]}
+        ]
+      };
+    HandshakeName == "KK" ->
+      {
+        [
+         {snd,[s]},
+         {rcv,[s]}
+        ],
+        [
+         {snd,[e,es,ss]},
+         {rcv,[e,ee,se]}
+        ]
+      };
+    HandshakeName == "NX" ->
+      {
+        [],
+        [
+	 {snd,[e]},
+         {rcv,[e,ee,s,es]}
+        ]
+      };
+    HandshakeName == "KX" ->
+      {
+        [{snd,[s]}],
+        [
+         {snd,[e]},
+         {rcv,[e,ee,se,s,es]}
+        ]
+      };
+    HandshakeName == "XN" ->
+      {
+        [],
+        [
+         {snd,[e]},
+         {rcv,[e,ee]},
+         {snd,[s,se]}
+        ]
+      };
+    HandshakeName == "IN" ->
+      {
+        [],
+        [
+         {snd,[e,es]},
+         {rcv,[e,ee,se]}
+        ]
+      };
     HandshakeName == "XK" ->
       {
         [{rcv,[s]}],
@@ -28,15 +96,6 @@ find_handshake(HandshakeName) ->
          {rcv,[e,ee,se]}
         ]
       };
-    HandshakeName == "XN" ->
-      {
-        [],
-        [
-         {snd,[e]},
-         {rcv,[e,ee]},
-         {snd,[s,se]}
-        ]
-      };
     HandshakeName == "XX" ->
       {
         [],
@@ -46,15 +105,51 @@ find_handshake(HandshakeName) ->
          {snd,[s,se]}
         ]
       };
-    HandshakeName == "KK" ->
+    HandshakeName == "IX" ->
       {
+        [],
         [
+         {snd,[e,s]},
+         {rcv,[e,ee,se,s,es]}
+        ]
+      };
+
+      %% Examples of deferred handshake patterns
+    HandshakeName == "NK1" ->
+      {
+        [{rcv,[s]}],
+        [
+         {snd,[e]},
+         {rcv,[e,ee,es]}
+        ]
+      };
+    HandshakeName == "X1X" ->
+      {
+        [],
+        [
+         {snd,[e]},
+         {rcv,[e,ee,s,es]},
          {snd,[s]},
-         {rcv,[s]}
-        ],
+	 {rcv,[se]}
+        ]
+      };
+    HandshakeName == "XX1" ->
+      {
+        [],
         [
-         {snd,[e,es,ss]},
-         {rcv,[e,ee,se]}
+         {snd,[e]},
+         {rcv,[e,ee,s]},
+         {snd,[es,s,se]}
+        ]
+      };
+    HandshakeName == "X1X1" ->
+      {
+        [],
+        [
+         {snd,[e]},
+         {rcv,[e,ee,s]},
+         {snd,[es,s]},
+	 {rcv,[se]}
         ]
       }
   end.
