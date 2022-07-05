@@ -28,10 +28,11 @@ noisy_trace(Handshake,DH,Crypto,Hash,TraceFileName,Message,KeyDir) ->
     ],
   LoadModules =
     [
-     enacl, enacl_nif, unicode_util, gen_tcp, inet_tcp, signal_extract_utils, gen, gen_server, crypto,
+     logger, enacl, enacl_nif, unicode_util, gen_tcp, inet_tcp, signal_extract_utils, gen, gen_server, crypto,
      enoise_crypto_basics, signal_extract_utils, enoise_test, code, file, base64, io, get_key
     ],
   lists:foreach(fun code:ensure_loaded/1, EnoiseModules++LoadModules),
+  timer:sleep(1000),
   KnowsRS = echo_noise:knows_rs(Handshake),
   test
     (
