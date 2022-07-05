@@ -4,14 +4,13 @@
 
 -module(enoise_test).
 
--export([client_test/5]).
+-export([client_test/7]).
 
 -include_lib("eunit/include/eunit.hrl").
 
 
 %% Talks to local echo-server (noise-c)
-client_test(Handshake,DH,Crypto,Hash,KnowsRS) ->
-  KeyDir = code:priv_dir(signal_extract)++"/testing_keys",
+client_test(Handshake,DH,Crypto,Hash,KnowsRS,Message,KeyDir) ->
   ProtocolName = "Noise" ++ "_" ++ Handshake ++ "_" ++ DH ++ "_" ++ Crypto ++ "_" ++ Hash,
   KnowsRS = echo_noise:knows_rs(Handshake),
   Prologue = echo_noise:find_echo_prologue(Handshake,DH,Crypto,Hash),
@@ -40,7 +39,7 @@ client_test(Handshake,DH,Crypto,Hash,KnowsRS) ->
         []
     end,
   {ok, EConn, _UselessState} = enoise:connect(TcpSock, Opts),
-  ok = enoise:send(EConn, <<"ok\n">>),
+  ok = enoise:send(EConn, Message),
   receive
     {noise, EConn, <<"ok\n">>} -> ok
   after 1000 -> error(timeout) end,

@@ -7,8 +7,14 @@
 -compile(export_all).
 
 check_and_generate(Handshake,DH,Crypto,Hash,TraceFile) ->
+  check_and_generate(Handshake,DH,Crypto,Hash,TraceFile,[]).
+
+check_and_generate(Handshake,DH,Crypto,Hash,TraceFile,Options) ->
   io:format("TraceFile is ~p~n",[TraceFile]),
-  signal_extract:noisy_trace(Handshake,DH,Crypto,Hash,TraceFile),
+  Message = proplists:get_value(message, Options, <<"ok\n">>),
+  PreKeyDir = proplists:get_value(keyDir, Options, "testing_keys"),
+  KeyDir = code:priv_dir(signal_extract)++"/"++PreKeyDir,
+  signal_extract:noisy_trace(Handshake,DH,Crypto,Hash,TraceFile,Message,KeyDir),
   dump_trace(TraceFile),
   check(Handshake,DH,Crypto,Hash,TraceFile).
 
@@ -49,6 +55,12 @@ check4() ->
 
 check5() ->
   check_and_generate("KK","25519","ChaChaPoly","SHA512","enoise2.trace").
+
+nonint_check() ->
+  check_and_generate("IK","25519","ChaChaPoly","SHA512","nonint1.trace",[{message,<<"msg1">>}]),
+  check_and_generate("IK","25519","ChaChaPoly","SHA512","nonint2.trace",[{message,<<"msg2">>}]),
+  signal_extract:trace_to_prolog("nonint1.trace","nonint1.pl"),
+  signal_extract:trace_to_prolog("nonint2.trace","nonint2.pl").
 
 check(FileName) ->
   check("XK","25519","ChaChaPoly","BLAKE2b",FileName).

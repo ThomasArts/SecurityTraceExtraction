@@ -2,7 +2,7 @@
 
 -include_lib("kernel/include/logger.hrl").
 
--export([noisy_trace/1,noisy_trace/5]).
+-export([noisy_trace/7]).
 -export([register_binaries/3,trace_make_call_deterministic/1]).
 -export([get_traces/1,compose_binaries/1,print_array/2]).
 -export([print_binary_register/0,show_trace/1,show_registered_trace/1]).
@@ -18,10 +18,7 @@
 
 %% rebar3 as test shell
 
-noisy_trace(File) ->
-  noisy_trace("XK","25519","ChaChaPoly","BLAKE2b",File).
-
-noisy_trace(Handshake,DH,Crypto,Hash,TraceFileName) ->
+noisy_trace(Handshake,DH,Crypto,Hash,TraceFileName,Message,KeyDir) ->
   EnoiseModules = 
     [
      enoise, 
@@ -39,7 +36,7 @@ noisy_trace(Handshake,DH,Crypto,Hash,TraceFileName) ->
   test
     (
     fun () -> 
-        enoise_test:client_test(Handshake,DH,Crypto,Hash,KnowsRS) 
+        enoise_test:client_test(Handshake,DH,Crypto,Hash,KnowsRS,Message,KeyDir) 
     end, 
     EnoiseModules,
     TraceFileName
@@ -435,6 +432,14 @@ compose_binaries(Traces) ->
                    error(bad);
                  _ -> ok
                end,
+	     if
+	       StartTime > EndTime ->
+		 io:format
+		   ("*** Error: ~p started at ~p and was produced at ~p~n",
+		    [Register,StartTime,EndTime]),
+		 error(bad);
+	       true -> ok
+	     end,
              {_,A} = lists:keyfind(SourcePid,1,Traces),
              PreContextBinaries = 
                lists:usort(defined_in_call(SourcePid,StartTime,EndTime,A)),
@@ -499,7 +504,7 @@ defined_in_call(Pid,FromTime,ToTime,A) ->
   Size = array:size(A),
   if
     (FromTime > ToTime) or (ToTime > Size) ->
-      ?LOG_DEBUG
+      io:format
         ("~n*** Error: incorrect parameters ~p -> ~p when ~p~n",
          [FromTime,ToTime,Size]),
       error(bad);
@@ -509,9 +514,9 @@ defined_in_call(Pid,FromTime,ToTime,A) ->
 defined_in_call(Pid,FromTime,ToTime,Skip,Size,A) ->
   if
     FromTime > ToTime ->
-      ?LOG_DEBUG
-        ("~n*** Error: defined_in_call(~p,~p)~n",
-         [FromTime,ToTime]),
+      io:format
+        ("~n*** Error: defined_in_call(~p,~p) event1=~p event2=~p~n",
+         [FromTime,ToTime,array:get(FromTime,A),array:get(ToTime,A)]),
       error(bad);
     true -> ok
   end,
@@ -621,7 +626,8 @@ call_of_function(_Pid,-1,Skip,Size,_A) ->
   ?LOG_DEBUG
     ("~n*** Warning: could not find call loc, skip:~n~p~n",
      [Skip]),
-  Size-1;
+  %%Size-1;
+  0;
 call_of_function(Pid,I,Skip,Size,A) ->
   Item = array:get(I,A),
   %%?LOG_DEBUG("~p: cof(~p,~p)~n",[I,Skip,Item]),
@@ -1436,6 +1442,20 @@ trace_to_prolog(TraceFile,PrologFile) ->
                io:format(PF,"event(~s,send(~s,~s),~s).~n",[to_pid(Pid),value_to_prolog(Msg),value_to_prolog(To),timestamp_to_prolog(TimeStamp)]);
              {trace_ts, Pid, exception_from, {M,F,Arity}, {Class,Reason}, TimeStamp} ->
                io:format(PF,"event(~s,exception_from(~s,~s,~s,~s,~s),~s).~n",[to_pid(Pid),value_to_prolog(M),value_to_prolog(F),value_to_prolog(Arity),value_to_prolog(Class),value_to_prolog(Reason),timestamp_to_prolog(TimeStamp)]);
+	     {trace_ts, Pid, exit, Arg, TimeStamp} ->
+               io:format(PF,"event(~s,exit(~s),~s).~n",[to_pid(Pid),value_to_prolog(Arg),timestamp_to_prolog(TimeStamp)]);
+	     {trace_ts, Pid, unlink, Arg, TimeStamp} ->
+               io:format(PF,"event(~s,unlink(~s),~s).~n",[to_pid(Pid),value_to_prolog(Arg),timestamp_to_prolog(TimeStamp)]);
+	     {trace_ts, Pid, getting_unlinked, Arg, TimeStamp} ->
+               io:format(PF,"event(~s,getting_unlinked(~s),~s).~n",[to_pid(Pid),value_to_prolog(Arg),timestamp_to_prolog(TimeStamp)]);
+	     {trace_ts, Pid, link, Arg, TimeStamp} ->
+               io:format(PF,"event(~s,link(~s),~s).~n",[to_pid(Pid),value_to_prolog(Arg),timestamp_to_prolog(TimeStamp)]);
+	     {trace_ts, Pid, getting_linked, LinkingPid, TimeStamp} ->
+               io:format(PF,"event(~s,getting_linked(~s),~s).~n",[to_pid(Pid),value_to_prolog(LinkingPid),timestamp_to_prolog(TimeStamp)]);
+	     {trace_ts, Pid, spawn, SpawnedPid, Arg, TimeStamp} ->
+               io:format(PF,"event(~s,spawn(~s,~s),~s).~n",[to_pid(Pid),to_pid(SpawnedPid),value_to_prolog(Arg),timestamp_to_prolog(TimeStamp)]);
+	     {trace_ts, Pid, spawned, ParentPid, Arg, TimeStamp} ->
+               io:format(PF,"event(~s,spawned(~s,~s),~s).~n",[to_pid(Pid),to_pid(ParentPid),value_to_prolog(Arg),timestamp_to_prolog(TimeStamp)]);
              Event ->
                io:format("Cannot translate event ~p yet~n",[Event]),
                error(nyi)
@@ -1467,3 +1487,4 @@ timestamp_to_prolog({T1,T2,T3}) ->
   io_lib:format("timestamp(~p,~p,~p)",[T1,T2,T3]).
 
 %% signal_extract:trace_to_prolog("enoise.trace","enoise.pl").
+%% signal_extract:trace_to_prolog("nonint1.trace","nonint1.pl").
