@@ -1440,7 +1440,7 @@ trace_to_prolog(TraceFile,PrologFile,RunId) ->
         (fun (Fact) ->
            case Fact of
              {trace_ts, Pid, call, {M,F,A}, TimeStamp} ->
-               io:format(PF,"event(~s,call(~s,~s,~s),~s,~p).~n",[to_pid(Pid),value_to_prolog(M),value_to_prolog(F),value_to_prolog(A),timestamp_to_prolog(TimeStamp),RunId]);
+               io:format(PF,"event(~s,call(~s,~s,[~s]),~s,~p).~n",[to_pid(Pid),value_to_prolog(M),value_to_prolog(F),values_to_prolog(A),timestamp_to_prolog(TimeStamp),RunId]);
              {trace_ts, Pid, return_from, {M,F,Arity}, Value, TimeStamp} ->
                io:format(PF,"event(~s,return_from(~s,~s,~s,~s),~s,~p).~n",[to_pid(Pid),value_to_prolog(M),value_to_prolog(F),value_to_prolog(Arity),value_to_prolog(Value),timestamp_to_prolog(TimeStamp),RunId]);
              {trace_ts, Pid, send, Msg, To, TimeStamp} ->
@@ -1468,6 +1468,9 @@ trace_to_prolog(TraceFile,PrologFile,RunId) ->
          end, L),
    ok = file:close(PF).
       
+values_to_prolog(Args) ->
+  comma_list(lists:map(fun value_to_prolog/1,V)).
+
 value_to_prolog(V) ->
   case V of
     _ when is_pid(V) -> to_pid(V);

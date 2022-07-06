@@ -28,6 +28,11 @@ isNormalReturnEvent(Event) :-
                   ,{erlang,make_ref,0}
                   ,{inet,timeout,1}
                   ,{erts_internal,open_port,2}
+                  ,{enacl,crypto_sign_ed25519_keypair,0}
+                  ,{enacl,crypto_sign_ed25519_secret_to_curve25519,1}
+                  ,{enacl,crypto_sign_ed25519_public_to_curve25519,1}
+                  ,{enacl,generichash,2}
+                  ,{enacl,curve25519_scalarmult,2}
               ]).
 isSpecialCallEvent(Event) :-
     action(Event,call(M,F,Args)),
@@ -154,6 +159,21 @@ nonint_returns(inet,timeout,1,Value1,Value2,Sub,NewSub) :-
     !, put_assoc(Value2,Sub,Value1,NewSub).
 nonint_returns(erts_internal,open_port,2,Value1,Value2,Sub,NewSub) :-
     !, put_assoc(Value2,Sub,Value1,NewSub).
+nonint_returns(enacl,crypto_sign_ed25519_keypair,0,Map1,Map2,Sub,NewSub) :-
+    Map1=map([tuple(public,Public1),tuple(secret,Secret1)]),
+    Map2=map([tuple(public,Public2),tuple(secret,Secret2)]),
+    !, put_assoc(Public2,Sub,Public1,Sub1), put_assoc(Secret2,Sub1,Secret1,NewSub).
+nonint_returns(enacl,curve25519_scalarmult,2,Value1,Value2,Sub,NewSub) :-
+    !, put_assoc(Value2,Sub,Value1,NewSub).
+nonint_returns(enacl,crypto_sign_ed25519_secret_to_curve25519,1,Value1,Value2,Sub,NewSub) :-
+    !, put_assoc(Value2,Sub,Value1,NewSub).
+nonint_returns(enacl,crypto_sign_ed25519_public_to_curve25519,1,Value1,Value2,Sub,NewSub) :-
+    !, put_assoc(Value2,Sub,Value1,NewSub).
+nonint_returns(enacl,generichash,2,tuple(ok,Value1),tuple(ok,Value2),Sub,NewSub) :-
+    !, put_assoc(Value2,Sub,Value1,NewSub).
+nonint_returns(M,F,Arity,V1,V2,_,_) :-
+    format('*** Error: cannot handle nonint_returns(~p,~p,~p)~nwith value1=~w~nand value2=~w.~n',[M,F,Arity,V1,V2]),
+    fail.
 
 equal_events(Ev1,Ev2,Sub) :-
     pid(Ev1,Pid1),
@@ -178,6 +198,11 @@ pid_equal(Pid1,Pid2,Sub) :-
 
 term_subst(pid(Pid),SubPid,Sub) :-
     try_subst(pid(Pid),SubPid,Sub), !.
+term_subst(binary(Binary),SubBinary,Sub) :-
+    subst(binary(Binary),SubBinary,Sub), !.
+term_subst(binary(Binary),binary(SubBinary),Sub) :-
+    binary_subst(Binary,SubBinary,Sub),
+    !.
 term_subst(Term,SubTerm,Sub) :-
     atomic(Term), !,
     try_subst(Term,SubTerm,Sub).
@@ -188,6 +213,37 @@ term_subst(Term,SubTerm,Sub) :-
     term_subst(Functor,SubFunctor,Sub),
     terms_subst(Args,SubArgs,Sub),
     SubTerm =.. [SubFunctor|SubArgs].
+
+is_binary_subst(binary(_)-binary(_)).
+
+binary_subst(Binary,SubstBinary,Sub) :-
+    assoc_to_list(Sub,SubList),
+    include(is_binary_subst,SubList,Binaries),
+    do_binary_subst(Binary,SubstBinary,Binaries).
+
+do_binary_subst(Binary,Binary,[]).
+do_binary_subst(Binary,SubstBinary,[binary(From)-binary(To)|Rest]) :-
+    binary_replace(Binary,Binary1,From,To),
+    do_binary_subst(Binary1,SubstBinary,Rest).
+
+binary_replace(Binary,SubstBinary,From,To) :-
+    length(Binary,BLen),
+    length(From,FromLen),
+    binary_replace(Binary,BLen,SubstBinary,From,FromLen,To).
+    %format('~n~nbinary_replace ~w   FROM   ~w   TO   ~w   RESULTS   ~w~n',[Binary,From,To,SubstBinary]).
+
+binary_replace([],_,[],_,_,_) :- !.
+binary_replace(Binary,BLen,Binary,_,FromLen,_) :-
+    FromLen > BLen, !.
+binary_replace(Binary,_,SubstBinary,From,_,To) :-
+    replace(Binary,From,To,SubstBinary), !.
+binary_replace([First|Rest],BLen,[First|SubstBinary],From,FromLen,To) :-
+    NewBLen is BLen-1,
+    binary_replace(Rest,NewBLen,SubstBinary,From,FromLen,To).
+
+replace(Binary,[],_,Binary).
+replace([First|RestBinary],[First|RestFrom],[FirstTo|RestTo],[FirstTo|RestSubst]) :-
+    replace(RestBinary,RestFrom,RestTo,RestSubst).
 
 terms_subst([],[],_).
 terms_subst([T1|Rest],[SubT|SubRest],Sub) :-
