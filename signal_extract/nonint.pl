@@ -33,6 +33,7 @@ isNormalReturnEvent(Event) :-
                   ,{enacl,crypto_sign_ed25519_public_to_curve25519,1}
                   ,{enacl,generichash,2}
                   ,{enacl,curve25519_scalarmult,2}
+                  ,{enoise_crypto_basics,padding,2}
               ]).
 isSpecialCallEvent(Event) :-
     action(Event,call(M,F,Args)),
@@ -168,6 +169,8 @@ nonint_returns(enacl,curve25519_scalarmult,2,Value1,Value2,Sub,NewSub) :-
 nonint_returns(enacl,crypto_sign_ed25519_secret_to_curve25519,1,Value1,Value2,Sub,NewSub) :-
     !, put_assoc(Value2,Sub,Value1,NewSub).
 nonint_returns(enacl,crypto_sign_ed25519_public_to_curve25519,1,Value1,Value2,Sub,NewSub) :-
+    !, put_assoc(Value2,Sub,Value1,NewSub).
+nonint_returns(enoise_crypto_basics,padding,2,Value1,Value2,Sub,NewSub) :-
     !, put_assoc(Value2,Sub,Value1,NewSub).
 nonint_returns(enacl,generichash,2,tuple(ok,Value1),tuple(ok,Value2),Sub,NewSub) :-
     !, put_assoc(Value2,Sub,Value1,NewSub).
