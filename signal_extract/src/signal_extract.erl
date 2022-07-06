@@ -32,6 +32,10 @@ noisy_trace(Handshake,DH,Crypto,Hash,TraceFileName,Message,KeyDir) ->
      enoise_crypto_basics, signal_extract_utils, enoise_test, code, file, base64, io, get_key
     ],
   lists:foreach(fun code:ensure_loaded/1, EnoiseModules++LoadModules),
+
+  %% Warmup code
+  inet_gethost_native:gethostbyname("localhost",inet),
+
   timer:sleep(1000),
   KnowsRS = echo_noise:knows_rs(Handshake),
   test

@@ -24,7 +24,19 @@ isNormalReturnEvent(Event) :-
               [
                   {binary,compile_pattern,1}
                   ,{erlang,monitor,2}
+                  ,{inet,start_timer,1}
+                  ,{erlang,make_ref,0}
+                  ,{inet,timeout,1}
+                  ,{erts_internal,open_port,2}
               ]).
+isSpecialCallEvent(Event) :-
+    action(Event,call(M,F,Args)),
+    length(Args,Arity),
+    member({M,F,Arity},
+           [
+               {erlang,port_control,3}
+               ,{erts_internal,port_control,3}
+           ]).
 
 module(Event,M) :-
     action(Event,call(M,_,_)).
@@ -105,10 +117,25 @@ nonint_ev(R1,Pid1,[Ev1|Rest1],R2,Pid2,[Ev2|Rest2],Sub,NewSub) :-
     nonint_returns(Ev1,Ev2,Sub,Sub1),
     nonint_ev(R1,Pid1,Rest1,R2,Pid2,Rest2,Sub1,NewSub).
 nonint_ev(R1,Pid1,[Ev1|Rest1],R2,Pid2,[Ev2|Rest2],Sub,NewSub) :-
+    isSpecialCallEvent(Ev1), isSpecialCallEvent(Ev2), !,
+    nonint_calls(Ev1,Ev2,Sub,Sub1),
+    nonint_ev(R1,Pid1,Rest1,R2,Pid2,Rest2,Sub1,NewSub).
+nonint_ev(R1,Pid1,[Ev1|Rest1],R2,Pid2,[Ev2|Rest2],Sub,NewSub) :-
     ( equal_events(Ev1,Ev2,Sub) ->
       nonint_ev(R1,Pid1,Rest1,R2,Pid2,Rest2,Sub,NewSub) ;
       format('~n Events~n   ~w~n and~n    ~w~n are not equal.~n',[Ev1,Ev2]),
       fail ).
+
+nonint_calls(Call1,Call2,Sub,NewSub) :-
+    action(Call1,call(M,F,Args1)),
+    action(Call2,call(M,F,Args2)),
+    length(Args1,Arity), length(Args2,Arity),
+    nonint_calls(M,F,Arity,Args1,Args2,Sub,NewSub).
+
+nonint_calls(erlang,port_control,3,_,_,Sub,Sub) :-
+    !.
+nonint_calls(erts_internal,port_control,3,_,_,Sub,Sub) :-
+    !.
 
 nonint_returns(Return1,Return2,Sub,NewSub) :-
     action(Return1,return_from(M,F,Arity,Value1)),
@@ -118,6 +145,14 @@ nonint_returns(Return1,Return2,Sub,NewSub) :-
 nonint_returns(binary,compile_pattern,1,Value1,Value2,Sub,NewSub) :-
     !, put_assoc(Value2,Sub,Value1,NewSub).
 nonint_returns(erlang,monitor,2,Value1,Value2,Sub,NewSub) :-
+    !, put_assoc(Value2,Sub,Value1,NewSub).
+nonint_returns(inet,start_timer,1,Value1,Value2,Sub,NewSub) :-
+    !, put_assoc(Value2,Sub,Value1,NewSub).
+nonint_returns(erlang,make_ref,0,Value1,Value2,Sub,NewSub) :-
+    !, put_assoc(Value2,Sub,Value1,NewSub).
+nonint_returns(inet,timeout,1,Value1,Value2,Sub,NewSub) :-
+    !, put_assoc(Value2,Sub,Value1,NewSub).
+nonint_returns(erts_internal,open_port,2,Value1,Value2,Sub,NewSub) :-
     !, put_assoc(Value2,Sub,Value1,NewSub).
 
 equal_events(Ev1,Ev2,Sub) :-

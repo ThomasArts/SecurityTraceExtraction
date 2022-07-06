@@ -56,6 +56,11 @@ check4() ->
 check5() ->
   check_and_generate("KK","25519","ChaChaPoly","SHA512","enoise2.trace").
 
+nonints() ->
+  nonint_check1(),  
+  nonint_check2(),
+  os:cmd("cat nonint1.pl nonint2.pl > nonints.pl").
+
 nonint_check1() ->
   check_and_generate("XK","25519","ChaChaPoly","BLAKE2b","nonint1.trace",[{message,<<"msg1">>}]),
   signal_extract:trace_to_prolog("nonint1.trace","nonint1.pl",r1).
