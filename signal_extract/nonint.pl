@@ -1,13 +1,18 @@
-isEvent(event(Pid,Event,Time)) :-
-    event(Pid,Event,Time).
+isEvent(event(Pid,Event,Time,RunId)) :-
+    event(Pid,Event,Time,RunId).
 
-code(codes(Pid,Events)) :-
-    events(Pid,UnsortedEvents),
+run(Run,Processes) :-
+    findall(P, process(Run,P), UnsortedProcesses),
+    predsort(spawnedFirst,UnsortedProcesses,Processes).
+
+process(Run,process(Run,Pid,Events)) :-
+    events(Run,Pid,UnsortedEvents),
     predsort(timeOrder,UnsortedEvents,Events).
 
-pid(event(Pid,_,_), Pid).
-time(event(_,_,TimeStamp),TimeStamp).
-action(event(_,Action,_),Action).
+pid(event(Pid,_,_,_), Pid).
+time(event(_,_,TimeStamp,_),TimeStamp).
+action(event(_,Action,_,_),Action).
+runId(event(_,_,_,Run),Run).
 
 isCallEvent(Event) :-
     action(Event,call(_,_,_)).
@@ -31,17 +36,22 @@ pids(Pids) :-
     findall(Pid, ( isEvent(Event), pid(Event,Pid) ), UnsortedPids),
     sort(UnsortedPids,Pids).
 
-events(Pid,Events) :-
-    bagof(Event, ( isEvent(Event), pid(Event,Pid) ), Events).
+events(Run,Pid,Events) :-
+    bagof(Event, ( isEvent(Event), pid(Event,Pid), runId(Event,Run) ), Events).
 	    
 low_events(low_events(Pid,LowEvents)) :-
     code(codes(Pid,Events)),
     include(is_low_event,Events,LowEvents).
 
-is_low_event(Event) :-
-    \+ isHighCallEvent(Event),
-    \+ isReturnEvent(Event),
-    !.
+is_high_event(Event) :-
+    isHighCallEvent(Event), !.
+is_high_event(Event) :-
+    isReturnEvent(Event).
+
+spawnedFirst(Delta,process(_,_,[Event1|_]),process(_,_,[Event2|_])) :-
+    time(Event1,Time1),
+    time(Event2,Time2),
+    lt_or_equal_time(Delta,Time1,Time2).
 
 timeOrder(Delta,Event1,Event2) :-
     time(Event1,Time1),
@@ -57,3 +67,95 @@ lt_or_equal_time('<',timestamp(T1,T2,T3_a),timestamp(T1,T2,T3_b)) :-
 lt_or_equal_time('=',T,T) :- !.
 lt_or_equal_time('>',_,_) :- !.
 
+nonint(R1,R2) :-
+    run(R1,Ps1),
+    run(R2,Ps2),
+    length(Ps1,P1len),
+    length(Ps2,P2len),
+    ( (P1len =\= P2len); (P1len==0) ->
+      format('~nRuns ~w and ~p creates a zero or different number of processes.~n',[R1,R2]);
+      nonint(R1,Ps1,R2,Ps2) ).
+
+nonint(R1,Ps1,R2,Ps2) :-
+    list_to_assoc(["msg2"-"msg1"],Subst),
+    nonint(R1,Ps1,R2,Ps2,Subst).
+
+nonint(_,[],_,[],_) :- !.
+nonint(R1,[P1|Rest1],R2,[P2|Rest2],Sub) :-
+    nonint(R1,P1,R2,P2,Sub,NewSub),
+    nonint(R1,Rest1,R2,Rest2,NewSub).
+
+nonint(R1,process(R1,Pid1,Events1),R2,process(R2,Pid2,Events2),Sub,NewSub) :-
+    put_assoc(Pid1,Sub,Pid2,Sub1),
+    nonint_ev(R1,Pid1,Events1,R2,Pid2,Events2,Sub1,NewSub).
+
+nonint_ev(_,_,[],_,_,[],Sub,Sub).
+nonint_ev(R1,Pid1,[Ev1|Rest1],R2,Pid2,Evs2,Sub,NewSub) :-
+    is_high_event(Ev1), !, nonint_ev(R1,Pid1,Rest1,R2,Pid2,Evs2,Sub,NewSub).
+nonint_ev(R1,Pid1,Evs1,R2,Pid2,[Ev2|Rest2],Sub,NewSub) :-
+    is_high_event(Ev2), !, nonint_ev(R1,Pid1,Evs1,R2,Pid2,Rest2,Sub,NewSub).
+nonint_ev(R1,Pid1,[Ev1|Rest1],R2,Pid2,[Ev2|Rest2],Sub,NewSub) :-
+    ( equal_events(Ev1,Ev2,Sub) ->
+      nonint_ev(R1,Pid1,Rest1,R2,Pid2,Rest2,Sub,NewSub) ;
+      format('~n Events~n   ~w~n and~n    ~w~n are not equal.~n',[Ev1,Ev2]),
+      fail ).
+
+equal_events(Ev1,Ev2,Sub) :-
+    pid(Ev1,Pid1),
+    action(Ev1,Action1),
+    pid(Ev2,Pid2),
+    action(Ev2,Action2),
+    pid_equal(Pid1,Pid2,Sub),
+    action_equal(Action1,Action2,Sub).
+
+action_equal(Action1,Action2,Sub) :-
+    term_subst(Action2,SubAction2,Sub),
+    ( Action1==SubAction2 ->
+      true;
+      assoc_to_list(Sub,SubList),
+      format('Actions~n  ~w~n and~n  ~w~n do not match;~n second action substituted:~n  ~w~n~nsubst=~w.~n',[Action1,SubAction2,Action2,SubList]), fail ).
+
+pid_equal(Pid1,Pid2,Sub) :-
+    ( get_assoc(Pid1,Sub,Pid2) ->
+      true;
+      assoc_to_list(Sub,SubList),
+      format('Pids ~w and ~p do not match;~nsubst=~w.~n',[Pid1,Pid2,SubList]), fail ).
+
+term_subst(pid(Pid),SubPid,Sub) :-
+    subst(pid(Pid),SubPid,Sub), !.
+term_subst(Term,SubTerm,Sub) :-
+    atomic(Term), !,
+    subst(Term,SubTerm,Sub).
+term_subst(Term,SubTerm,Sub) :-
+    Term =.. [Functor|Args],
+    term_subst(Functor,SubFunctor,Sub),
+    terms_subst(Args,SubArgs,Sub),
+    SubTerm =.. [SubFunctor|SubArgs].
+
+terms_subst([],[],_).
+terms_subst([T1|Rest],[SubT|SubRest],Sub) :-
+    term_subst(T1,SubT,Sub),
+    terms_subst(Rest,SubRest,Sub).
+
+subst(T,SubT,Sub) :-
+    get_assoc(T,Sub,SubT), !.
+subst(T,T,_).
+        
+type(T,number) :-
+    number(T), !.
+type(T,atom) :-
+    atom(T), !.
+type(T,blob(Type)) :-
+    blob(T,Type), !.
+type(T,string) :-
+    string(T), !.
+type(T,atomic) :-
+    atomic(T).
+type(T,compound) :-
+    compound(T).
+
+
+    
+
+    
+    

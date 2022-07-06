@@ -1428,7 +1428,7 @@ xor_const() ->
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-trace_to_prolog(TraceFile,PrologFile) ->
+trace_to_prolog(TraceFile,PrologFile,RunId) ->
   {ok,PF} = file:open(PrologFile,[write]),
   {ok,B} = file:read_file(TraceFile),
   {trace,L} = binary_to_term(B),
@@ -1436,27 +1436,27 @@ trace_to_prolog(TraceFile,PrologFile) ->
         (fun (Fact) ->
            case Fact of
              {trace_ts, Pid, call, {M,F,A}, TimeStamp} ->
-               io:format(PF,"event(~s,call(~s,~s,~s),~s).~n",[to_pid(Pid),value_to_prolog(M),value_to_prolog(F),value_to_prolog(A),timestamp_to_prolog(TimeStamp)]);
+               io:format(PF,"event(~s,call(~s,~s,~s),~s,~p).~n",[to_pid(Pid),value_to_prolog(M),value_to_prolog(F),value_to_prolog(A),timestamp_to_prolog(TimeStamp),RunId]);
              {trace_ts, Pid, return_from, {M,F,Arity}, Value, TimeStamp} ->
-               io:format(PF,"event(~s,return_from(~s,~s,~s,~s),~s).~n",[to_pid(Pid),value_to_prolog(M),value_to_prolog(F),value_to_prolog(Arity),value_to_prolog(Value),timestamp_to_prolog(TimeStamp)]);
+               io:format(PF,"event(~s,return_from(~s,~s,~s,~s),~s,~p).~n",[to_pid(Pid),value_to_prolog(M),value_to_prolog(F),value_to_prolog(Arity),value_to_prolog(Value),timestamp_to_prolog(TimeStamp),RunId]);
              {trace_ts, Pid, send, Msg, To, TimeStamp} ->
-               io:format(PF,"event(~s,send(~s,~s),~s).~n",[to_pid(Pid),value_to_prolog(Msg),value_to_prolog(To),timestamp_to_prolog(TimeStamp)]);
+               io:format(PF,"event(~s,send(~s,~s),~s,~p).~n",[to_pid(Pid),value_to_prolog(Msg),value_to_prolog(To),timestamp_to_prolog(TimeStamp),RunId]);
              {trace_ts, Pid, exception_from, {M,F,Arity}, {Class,Reason}, TimeStamp} ->
-               io:format(PF,"event(~s,exception_from(~s,~s,~s,~s,~s),~s).~n",[to_pid(Pid),value_to_prolog(M),value_to_prolog(F),value_to_prolog(Arity),value_to_prolog(Class),value_to_prolog(Reason),timestamp_to_prolog(TimeStamp)]);
+               io:format(PF,"event(~s,exception_from(~s,~s,~s,~s,~s),~s,~p).~n",[to_pid(Pid),value_to_prolog(M),value_to_prolog(F),value_to_prolog(Arity),value_to_prolog(Class),value_to_prolog(Reason),timestamp_to_prolog(TimeStamp),RunId]);
 	     {trace_ts, Pid, exit, Arg, TimeStamp} ->
-               io:format(PF,"event(~s,exit(~s),~s).~n",[to_pid(Pid),value_to_prolog(Arg),timestamp_to_prolog(TimeStamp)]);
+               io:format(PF,"event(~s,exit(~s),~s,~p).~n",[to_pid(Pid),value_to_prolog(Arg),timestamp_to_prolog(TimeStamp),RunId]);
 	     {trace_ts, Pid, unlink, Arg, TimeStamp} ->
-               io:format(PF,"event(~s,unlink(~s),~s).~n",[to_pid(Pid),value_to_prolog(Arg),timestamp_to_prolog(TimeStamp)]);
+               io:format(PF,"event(~s,unlink(~s),~s,~p).~n",[to_pid(Pid),value_to_prolog(Arg),timestamp_to_prolog(TimeStamp),RunId]);
 	     {trace_ts, Pid, getting_unlinked, Arg, TimeStamp} ->
-               io:format(PF,"event(~s,getting_unlinked(~s),~s).~n",[to_pid(Pid),value_to_prolog(Arg),timestamp_to_prolog(TimeStamp)]);
+               io:format(PF,"event(~s,getting_unlinked(~s),~s,~p).~n",[to_pid(Pid),value_to_prolog(Arg),timestamp_to_prolog(TimeStamp),RunId]);
 	     {trace_ts, Pid, link, Arg, TimeStamp} ->
-               io:format(PF,"event(~s,link(~s),~s).~n",[to_pid(Pid),value_to_prolog(Arg),timestamp_to_prolog(TimeStamp)]);
+               io:format(PF,"event(~s,link(~s),~s,~p).~n",[to_pid(Pid),value_to_prolog(Arg),timestamp_to_prolog(TimeStamp),RunId]);
 	     {trace_ts, Pid, getting_linked, LinkingPid, TimeStamp} ->
-               io:format(PF,"event(~s,getting_linked(~s),~s).~n",[to_pid(Pid),value_to_prolog(LinkingPid),timestamp_to_prolog(TimeStamp)]);
+               io:format(PF,"event(~s,getting_linked(~s),~s,~p).~n",[to_pid(Pid),value_to_prolog(LinkingPid),timestamp_to_prolog(TimeStamp),RunId]);
 	     {trace_ts, Pid, spawn, SpawnedPid, Arg, TimeStamp} ->
-               io:format(PF,"event(~s,spawn(~s,~s),~s).~n",[to_pid(Pid),to_pid(SpawnedPid),value_to_prolog(Arg),timestamp_to_prolog(TimeStamp)]);
+               io:format(PF,"event(~s,spawn(~s,~s),~s,~p).~n",[to_pid(Pid),to_pid(SpawnedPid),value_to_prolog(Arg),timestamp_to_prolog(TimeStamp),RunId]);
 	     {trace_ts, Pid, spawned, ParentPid, Arg, TimeStamp} ->
-               io:format(PF,"event(~s,spawned(~s,~s),~s).~n",[to_pid(Pid),to_pid(ParentPid),value_to_prolog(Arg),timestamp_to_prolog(TimeStamp)]);
+               io:format(PF,"event(~s,spawned(~s,~s),~s,~p).~n",[to_pid(Pid),to_pid(ParentPid),value_to_prolog(Arg),timestamp_to_prolog(TimeStamp),RunId]);
              Event ->
                io:format("Cannot translate event ~p yet~n",[Event]),
                error(nyi)
@@ -1474,9 +1474,18 @@ value_to_prolog(V) ->
     _ when is_binary(V) -> io_lib:format("binary(~s)",[value_to_prolog(binary:bin_to_list(V))]);
     T when is_tuple(T) -> io_lib:format("tuple(~s)",[comma_list(lists:map(fun (E) -> value_to_prolog(E) end, tuple_to_list(T)))]);
     [] -> "[]";
-    L when is_list(L) -> io_lib:format("[~s]",[comma_list(lists:map(fun (E) -> value_to_prolog(E) end, L))]);
+    L when is_list(L) -> 
+      case is_string(L) of
+        true -> io_lib:format("\"~s\"",[L]);
+        false -> io_lib:format("[~s]",[comma_list(lists:map(fun (E) -> value_to_prolog(E) end, L))])
+      end;
     _ -> io_lib:format("~p",[V])
   end.
+
+is_string([]) ->
+  false;
+is_string(L) ->
+  lists:all(fun (Ch) -> (Ch >= 32) and (Ch =< 126) end, L).
 
 comma_list([]) -> "";
 comma_list([Element]) -> Element;

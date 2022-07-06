@@ -57,12 +57,12 @@ check5() ->
   check_and_generate("KK","25519","ChaChaPoly","SHA512","enoise2.trace").
 
 nonint_check1() ->
-  check_and_generate("IK","25519","ChaChaPoly","SHA512","nonint1.trace",[{message,<<"msg1">>}]),
-  signal_extract:trace_to_prolog("nonint1.trace","nonint1.pl").
+  check_and_generate("XK","25519","ChaChaPoly","BLAKE2b","nonint1.trace",[{message,<<"msg1">>}]),
+  signal_extract:trace_to_prolog("nonint1.trace","nonint1.pl",r1).
 
 nonint_check2() ->
-  check_and_generate("IK","25519","ChaChaPoly","SHA512","nonint2.trace",[{message,<<"msg2">>}]),
-  signal_extract:trace_to_prolog("nonint2.trace","nonint2.pl").
+  check_and_generate("XK","25519","ChaChaPoly","BLAKE2b","nonint2.trace",[{message,<<"msg2">>}]),
+  signal_extract:trace_to_prolog("nonint2.trace","nonint2.pl",r2).
 
 check(FileName) ->
   check("XK","25519","ChaChaPoly","BLAKE2b",FileName).
