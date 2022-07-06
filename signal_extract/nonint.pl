@@ -18,6 +18,13 @@ isCallEvent(Event) :-
     action(Event,call(_,_,_)).
 isReturnEvent(Event) :-
     action(Event,return_from(_,_,_,_)).
+isNormalReturnEvent(Event) :-
+    action(Event,return_from(M,F,Arity,_)),
+    \+ member({M,F,Arity},
+              [
+                  {binary,compile_pattern,1}
+                  ,{erlang,monitor,2}
+              ]).
 
 module(Event,M) :-
     action(Event,call(M,_,_)).
@@ -42,11 +49,6 @@ events(Run,Pid,Events) :-
 low_events(low_events(Pid,LowEvents)) :-
     code(codes(Pid,Events)),
     include(is_low_event,Events,LowEvents).
-
-is_high_event(Event) :-
-    isHighCallEvent(Event), !.
-is_high_event(Event) :-
-    isReturnEvent(Event).
 
 spawnedFirst(Delta,process(_,_,[Event1|_]),process(_,_,[Event2|_])) :-
     time(Event1,Time1),
@@ -86,19 +88,37 @@ nonint(R1,[P1|Rest1],R2,[P2|Rest2],Sub) :-
     nonint(R1,Rest1,R2,Rest2,NewSub).
 
 nonint(R1,process(R1,Pid1,Events1),R2,process(R2,Pid2,Events2),Sub,NewSub) :-
-    put_assoc(Pid1,Sub,Pid2,Sub1),
+    put_assoc(Pid2,Sub,Pid1,Sub1),
     nonint_ev(R1,Pid1,Events1,R2,Pid2,Events2,Sub1,NewSub).
 
 nonint_ev(_,_,[],_,_,[],Sub,Sub).
 nonint_ev(R1,Pid1,[Ev1|Rest1],R2,Pid2,Evs2,Sub,NewSub) :-
-    is_high_event(Ev1), !, nonint_ev(R1,Pid1,Rest1,R2,Pid2,Evs2,Sub,NewSub).
+    isHighCallEvent(Ev1), !, nonint_ev(R1,Pid1,Rest1,R2,Pid2,Evs2,Sub,NewSub).
 nonint_ev(R1,Pid1,Evs1,R2,Pid2,[Ev2|Rest2],Sub,NewSub) :-
-    is_high_event(Ev2), !, nonint_ev(R1,Pid1,Evs1,R2,Pid2,Rest2,Sub,NewSub).
+    isHighCallEvent(Ev2), !, nonint_ev(R1,Pid1,Evs1,R2,Pid2,Rest2,Sub,NewSub).
+nonint_ev(R1,Pid1,[Ev1|Rest1],R2,Pid2,Evs2,Sub,NewSub) :-
+    isNormalReturnEvent(Ev1), !, nonint_ev(R1,Pid1,Rest1,R2,Pid2,Evs2,Sub,NewSub).
+nonint_ev(R1,Pid1,Evs1,R2,Pid2,[Ev2|Rest2],Sub,NewSub) :-
+    isNormalReturnEvent(Ev2), !, nonint_ev(R1,Pid1,Evs1,R2,Pid2,Rest2,Sub,NewSub).
+nonint_ev(R1,Pid1,[Ev1|Rest1],R2,Pid2,[Ev2|Rest2],Sub,NewSub) :-
+    isReturnEvent(Ev1), isReturnEvent(Ev2), !,
+    nonint_returns(Ev1,Ev2,Sub,Sub1),
+    nonint_ev(R1,Pid1,Rest1,R2,Pid2,Rest2,Sub1,NewSub).
 nonint_ev(R1,Pid1,[Ev1|Rest1],R2,Pid2,[Ev2|Rest2],Sub,NewSub) :-
     ( equal_events(Ev1,Ev2,Sub) ->
       nonint_ev(R1,Pid1,Rest1,R2,Pid2,Rest2,Sub,NewSub) ;
       format('~n Events~n   ~w~n and~n    ~w~n are not equal.~n',[Ev1,Ev2]),
       fail ).
+
+nonint_returns(Return1,Return2,Sub,NewSub) :-
+    action(Return1,return_from(M,F,Arity,Value1)),
+    action(Return2,return_from(M,F,Arity,Value2)),
+    nonint_returns(M,F,Arity,Value1,Value2,Sub,NewSub).
+
+nonint_returns(binary,compile_pattern,1,Value1,Value2,Sub,NewSub) :-
+    !, put_assoc(Value2,Sub,Value1,NewSub).
+nonint_returns(erlang,monitor,2,Value1,Value2,Sub,NewSub) :-
+    !, put_assoc(Value2,Sub,Value1,NewSub).
 
 equal_events(Ev1,Ev2,Sub) :-
     pid(Ev1,Pid1),
@@ -113,19 +133,21 @@ action_equal(Action1,Action2,Sub) :-
     ( Action1==SubAction2 ->
       true;
       assoc_to_list(Sub,SubList),
-      format('Actions~n  ~w~n and~n  ~w~n do not match;~n second action substituted:~n  ~w~n~nsubst=~w.~n',[Action1,SubAction2,Action2,SubList]), fail ).
+      format('Actions~n  ~w~n and~n  ~w~n do not match;~n second action substituted:~n  ~w~n~nsubst=~w.~n',[Action1,Action2,SubAction2,SubList]), fail ).
 
 pid_equal(Pid1,Pid2,Sub) :-
-    ( get_assoc(Pid1,Sub,Pid2) ->
+    ( get_assoc(Pid2,Sub,Pid1) ->
       true;
       assoc_to_list(Sub,SubList),
       format('Pids ~w and ~p do not match;~nsubst=~w.~n',[Pid1,Pid2,SubList]), fail ).
 
 term_subst(pid(Pid),SubPid,Sub) :-
-    subst(pid(Pid),SubPid,Sub), !.
+    try_subst(pid(Pid),SubPid,Sub), !.
 term_subst(Term,SubTerm,Sub) :-
     atomic(Term), !,
-    subst(Term,SubTerm,Sub).
+    try_subst(Term,SubTerm,Sub).
+term_subst(Term,SubTerm,Sub) :-
+    subst(Term,SubTerm,Sub), !.
 term_subst(Term,SubTerm,Sub) :-
     Term =.. [Functor|Args],
     term_subst(Functor,SubFunctor,Sub),
@@ -137,10 +159,13 @@ terms_subst([T1|Rest],[SubT|SubRest],Sub) :-
     term_subst(T1,SubT,Sub),
     terms_subst(Rest,SubRest,Sub).
 
+try_subst(T,SubT,Sub) :-
+    subst(T,SubT,Sub), !.
+try_subst(T,T,_).
+
 subst(T,SubT,Sub) :-
-    get_assoc(T,Sub,SubT), !.
-subst(T,T,_).
-        
+    get_assoc(T,Sub,SubT).
+
 type(T,number) :-
     number(T), !.
 type(T,atom) :-
