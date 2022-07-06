@@ -53,7 +53,7 @@ do_trace(TracedPid,ToPid,Modules) ->
                 %%call,arity,return_to,
                 call,
                 set_on_spawn,
-                %%'receive',
+                'receive',
                 send,
                 procs,
 		ports,
@@ -1461,6 +1461,8 @@ trace_to_prolog(TraceFile,PrologFile,RunId) ->
                io:format(PF,"event(~s,spawn(~s,~s),~s,~p).~n",[to_pid(Pid),to_pid(SpawnedPid),value_to_prolog(Arg),timestamp_to_prolog(TimeStamp),RunId]);
 	     {trace_ts, Pid, spawned, ParentPid, Arg, TimeStamp} ->
                io:format(PF,"event(~s,spawned(~s,~s),~s,~p).~n",[to_pid(Pid),to_pid(ParentPid),value_to_prolog(Arg),timestamp_to_prolog(TimeStamp),RunId]);
+	     {trace_ts, Pid, 'receive', Msg, TimeStamp} ->
+               io:format(PF,"event(~s,receive(~s),~s,~p).~n",[to_pid(Pid),value_to_prolog(Msg),timestamp_to_prolog(TimeStamp),RunId]);
              Event ->
                io:format("Cannot translate event ~p yet~n",[Event]),
                error(nyi)
@@ -1469,7 +1471,7 @@ trace_to_prolog(TraceFile,PrologFile,RunId) ->
    ok = file:close(PF).
       
 values_to_prolog(Args) ->
-  comma_list(lists:map(fun value_to_prolog/1,V)).
+  comma_list(lists:map(fun value_to_prolog/1,Args)).
 
 value_to_prolog(V) ->
   case V of

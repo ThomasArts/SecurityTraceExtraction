@@ -14,6 +14,8 @@ time(event(_,_,TimeStamp,_),TimeStamp).
 action(event(_,Action,_,_),Action).
 runId(event(_,_,_,Run),Run).
 
+isLinkEvent(Event) :-
+    action(Event,link(_)).
 isCallEvent(Event) :-
     action(Event,call(_,_,_)).
 isReturnEvent(Event) :-
@@ -34,6 +36,8 @@ isNormalReturnEvent(Event) :-
                   ,{enacl,generichash,2}
                   ,{enacl,curve25519_scalarmult,2}
                   ,{enoise_crypto_basics,padding,2}
+                  ,{enacl,aead_chacha20poly1305_encrypt,4}
+                  %%,{enoise,gen_tcp_rcv_msg,2}
               ]).
 isSpecialCallEvent(Event) :-
     action(Event,call(M,F,Args)),
@@ -46,6 +50,11 @@ isSpecialCallEvent(Event) :-
 
 module(Event,M) :-
     action(Event,call(M,_,_)).
+
+isHighEvent(Event) :-
+    isHighCallEvent(Event), !.
+isHighEvent(Event) :-
+    isLinkEvent(Event), !.
 
 isHighCallEvent(Event) :-
     isCallEvent(Event),
@@ -111,9 +120,9 @@ nonint(R1,process(R1,Pid1,Events1),R2,process(R2,Pid2,Events2),Sub,NewSub) :-
 
 nonint_ev(_,_,[],_,_,[],Sub,Sub).
 nonint_ev(R1,Pid1,[Ev1|Rest1],R2,Pid2,Evs2,Sub,NewSub) :-
-    isHighCallEvent(Ev1), !, nonint_ev(R1,Pid1,Rest1,R2,Pid2,Evs2,Sub,NewSub).
+    isHighEvent(Ev1), !, nonint_ev(R1,Pid1,Rest1,R2,Pid2,Evs2,Sub,NewSub).
 nonint_ev(R1,Pid1,Evs1,R2,Pid2,[Ev2|Rest2],Sub,NewSub) :-
-    isHighCallEvent(Ev2), !, nonint_ev(R1,Pid1,Evs1,R2,Pid2,Rest2,Sub,NewSub).
+    isHighEvent(Ev2), !, nonint_ev(R1,Pid1,Evs1,R2,Pid2,Rest2,Sub,NewSub).
 nonint_ev(R1,Pid1,[Ev1|Rest1],R2,Pid2,Evs2,Sub,NewSub) :-
     isNormalReturnEvent(Ev1), !, nonint_ev(R1,Pid1,Rest1,R2,Pid2,Evs2,Sub,NewSub).
 nonint_ev(R1,Pid1,Evs1,R2,Pid2,[Ev2|Rest2],Sub,NewSub) :-
@@ -122,6 +131,15 @@ nonint_ev(R1,Pid1,[Ev1|Rest1],R2,Pid2,[Ev2|Rest2],Sub,NewSub) :-
     isReturnEvent(Ev1), isReturnEvent(Ev2), !,
     nonint_returns(Ev1,Ev2,Sub,Sub1),
     nonint_ev(R1,Pid1,Rest1,R2,Pid2,Rest2,Sub1,NewSub).
+nonint_ev(R1,Pid1,[Ev1|Rest1],R2,Pid2,[Ev2|Rest2],Sub,NewSub) :-
+    action(Ev1,receive(tuple(tcp,Port1,Binary1))),
+    action(Ev2,receive(tuple(tcp,Port2,Binary2))),
+    !,
+    term_equal(Port1,Port2,Sub),
+    ( Binary1==Binary2 ->
+      nonint_ev(R1,Pid1,Rest1,R2,Pid2,Rest2,Sub,NewSub);
+      put_assoc(Binary2,Sub,Binary1,Subst1),
+      nonint_ev(R1,Pid1,Rest1,R2,Pid2,Rest2,Subst1,NewSub) ).
 nonint_ev(R1,Pid1,[Ev1|Rest1],R2,Pid2,[Ev2|Rest2],Sub,NewSub) :-
     isSpecialCallEvent(Ev1), isSpecialCallEvent(Ev2), !,
     nonint_calls(Ev1,Ev2,Sub,Sub1),
@@ -164,6 +182,8 @@ nonint_returns(enacl,crypto_sign_ed25519_keypair,0,Map1,Map2,Sub,NewSub) :-
     Map1=map([tuple(public,Public1),tuple(secret,Secret1)]),
     Map2=map([tuple(public,Public2),tuple(secret,Secret2)]),
     !, put_assoc(Public2,Sub,Public1,Sub1), put_assoc(Secret2,Sub1,Secret1,NewSub).
+nonint_returns(enacl,aead_chacha20poly1305_encrypt,4,Value1,Value2,Sub,NewSub) :-
+    !, put_assoc(Value2,Sub,Value1,NewSub).
 nonint_returns(enacl,curve25519_scalarmult,2,Value1,Value2,Sub,NewSub) :-
     !, put_assoc(Value2,Sub,Value1,NewSub).
 nonint_returns(enacl,crypto_sign_ed25519_secret_to_curve25519,1,Value1,Value2,Sub,NewSub) :-
@@ -174,9 +194,12 @@ nonint_returns(enoise_crypto_basics,padding,2,Value1,Value2,Sub,NewSub) :-
     !, put_assoc(Value2,Sub,Value1,NewSub).
 nonint_returns(enacl,generichash,2,tuple(ok,Value1),tuple(ok,Value2),Sub,NewSub) :-
     !, put_assoc(Value2,Sub,Value1,NewSub).
+%%nonint_returns(enoise,gen_tcp_rcv_msg,2,tuple(ok,Value1),tuple(ok,Value2),Sub,NewSub) :-
+%%    !, put_assoc(Value2,Sub,Value1,NewSub).
 nonint_returns(M,F,Arity,V1,V2,_,_) :-
     format('*** Error: cannot handle nonint_returns(~p,~p,~p)~nwith value1=~w~nand value2=~w.~n',[M,F,Arity,V1,V2]),
     fail.
+%%tuple(ok,binary(...]),tuple(port('#Port<0.12>'),true,binary([]))))
 
 equal_events(Ev1,Ev2,Sub) :-
     pid(Ev1,Pid1),
@@ -184,14 +207,32 @@ equal_events(Ev1,Ev2,Sub) :-
     pid(Ev2,Pid2),
     action(Ev2,Action2),
     pid_equal(Pid1,Pid2,Sub),
-    action_equal(Action1,Action2,Sub).
+    term_equal(Action1,Action2,Sub).
 
-action_equal(Action1,Action2,Sub) :-
+term_equal(Action,Action,_) :- !.
+term_equal(Action1,Action2,Sub) :-
     term_subst(Action2,SubAction2,Sub),
     ( Action1==SubAction2 ->
       true;
       assoc_to_list(Sub,SubList),
-      format('Actions~n  ~w~n and~n  ~w~n do not match;~n second action substituted:~n  ~w~n~nsubst=~w.~n',[Action1,Action2,SubAction2,SubList]), fail ).
+      diff(Action1,SubAction2,SubstDiff),
+      format('Terms~n  ~w~n and~n  ~w~n do not match;~n second term substituted:~n  ~w~n~nSubst diff:~n~w~n~nsubst=~w.~n',[Action1,Action2,SubAction2,SubstDiff,SubList]), fail ).
+
+diff(A1,A2,Subst) :-
+    diff(A1,A2,[],Subst).
+diff(T,T,Subst,Subst) :- !.
+diff(binary(B1),binary(B2),Subst,[subst(binary(B1),binary(B2))|Subst]) :- !.
+diff(T1,T2,Subst,NewSubst) :-
+    compound(T1), compound(T2), T1 =.. [Functor1|Args1], T2 =.. [Functor2|Args2],
+    !,
+    ( Functor1==Functor2 ->
+      diffArgs(Args1,Args2,Subst,NewSubst);
+      diff(Functor1,Functor2,Subst,NewSubst) ).
+diff(T1,T2,Subst,[subst(T1,T2)|Subst]).
+diffArgs([],[],Subst,Subst).
+diffArgs([First1|Rest1],[First2|Rest2],Subst,NewSubst) :-
+    diff(First1,First2,Subst,Subst1),
+    diffArgs(Rest1,Rest2,Subst1,NewSubst).
 
 pid_equal(Pid1,Pid2,Sub) :-
     ( get_assoc(Pid2,Sub,Pid1) ->
@@ -222,31 +263,52 @@ is_binary_subst(binary(_)-binary(_)).
 binary_subst(Binary,SubstBinary,Sub) :-
     assoc_to_list(Sub,SubList),
     include(is_binary_subst,SubList,Binaries),
-    do_binary_subst(Binary,SubstBinary,Binaries).
+    binary_ops(Binary,SubstBinary,Binaries).
 
-do_binary_subst(Binary,Binary,[]).
-do_binary_subst(Binary,SubstBinary,[binary(From)-binary(To)|Rest]) :-
-    binary_replace(Binary,Binary1,From,To),
-    do_binary_subst(Binary1,SubstBinary,Rest).
+binary_ops(Binary,SubstBinary,Binaries) :-
+    do_binary_shrink(Binary,SubstBinary,Binaries),
+    !.
+binary_ops(Binary,SubstBinary,Binaries) :-
+    do_binary_merge(Binary,SubstBinary,Binaries),
+    !.
 
-binary_replace(Binary,SubstBinary,From,To) :-
+do_binary_shrink(Binary,SubstBinary,[binary(From)-binary(To)|_]) :-
+    binary_shrink_subst(Binary,SubstBinary,From,To), !.
+do_binary_shrink(Binary,SubstBinary,[_|Rest]) :-
+    do_binary_shrink(Binary,SubstBinary,Rest).
+
+binary_shrink_subst(Binary,SubstBinary,From,To) :-
+    find_binary(Binary,SubstBinary,From,To), !.
+binary_shrink_subst(Binary,SubstBinary,[_|RestFrom],[_|RestTo]) :-
+    binary_shrink_subst(Binary,SubstBinary,RestFrom,RestTo).
+
+find_binary([],[],_,_).
+find_binary([First|RestBinary],[FirstTo|Subst1],[First|RestFrom],[FirstTo|RestTo]) :-
+    find_binary(RestBinary,Subst1,RestFrom,RestTo).
+
+do_binary_merge(Binary,Binary,[]).
+do_binary_merge(Binary,SubstBinary,[binary(From)-binary(To)|Rest]) :-
+    binary_merge_subst(Binary,Binary1,From,To),
+    do_binary_merge(Binary1,SubstBinary,Rest).
+
+binary_merge_subst(Binary,SubstBinary,From,To) :-
     length(Binary,BLen),
     length(From,FromLen),
-    binary_replace(Binary,BLen,SubstBinary,From,FromLen,To).
-    %format('~n~nbinary_replace ~w   FROM   ~w   TO   ~w   RESULTS   ~w~n',[Binary,From,To,SubstBinary]).
+    binary_merge_subst(Binary,BLen,SubstBinary,From,FromLen,To).
+    %format('~n~nbinary_merge_subst ~w   FROM   ~w   TO   ~w   RESULTS   ~w~n',[Binary,From,To,SubstBinary]).
 
-binary_replace([],_,[],_,_,_) :- !.
-binary_replace(Binary,BLen,Binary,_,FromLen,_) :-
+binary_merge_subst([],_,[],_,_,_) :- !.
+binary_merge_subst(Binary,BLen,Binary,_,FromLen,_) :-
     FromLen > BLen, !.
-binary_replace(Binary,_,SubstBinary,From,_,To) :-
-    replace(Binary,From,To,SubstBinary), !.
-binary_replace([First|Rest],BLen,[First|SubstBinary],From,FromLen,To) :-
+binary_merge_subst(Binary,_,SubstBinary,From,_,To) :-
+    replace_prefix(Binary,From,To,SubstBinary), !.
+binary_merge_subst([First|Rest],BLen,[First|SubstBinary],From,FromLen,To) :-
     NewBLen is BLen-1,
-    binary_replace(Rest,NewBLen,SubstBinary,From,FromLen,To).
+    binary_merge_subst(Rest,NewBLen,SubstBinary,From,FromLen,To).
 
-replace(Binary,[],_,Binary).
-replace([First|RestBinary],[First|RestFrom],[FirstTo|RestTo],[FirstTo|RestSubst]) :-
-    replace(RestBinary,RestFrom,RestTo,RestSubst).
+replace_prefix(Binary,[],_,Binary).
+replace_prefix([First|RestBinary],[First|RestFrom],[FirstTo|RestTo],[FirstTo|RestSubst]) :-
+    replace_prefix(RestBinary,RestFrom,RestTo,RestSubst).
 
 terms_subst([],[],_).
 terms_subst([T1|Rest],[SubT|SubRest],Sub) :-
