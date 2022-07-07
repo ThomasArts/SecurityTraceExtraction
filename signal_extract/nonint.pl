@@ -141,32 +141,14 @@ nonint_ev(R1,Pid1,[Ev1|Rest1],R2,Pid2,[Ev2|Rest2],Sub,NewSub) :-
     nonint_returns(Ev1,Ev2,Sub,Sub1),
     nonint_ev(R1,Pid1,Rest1,R2,Pid2,Rest2,Sub1,NewSub).
 nonint_ev(R1,Pid1,[Ev1|Rest1],R2,Pid2,[Ev2|Rest2],Sub,NewSub) :-
-     action(Ev1,receive(Msg1),
-     action(Ev2,receive(Msg2),
+     action(Ev1,receive(Msg1)),
+     action(Ev2,receive(Msg2)),
      !,
      ( Msg1==Msg2 ->
        nonint_ev(R1,Pid1,Rest1,R2,Pid2,Rest2,Sub,NewSub);
        diff(Msg1,Msg2,Diff),
-       update_assoc_from_diff(Sub,Diff,NewSub),
+       update_assoc_from_diff(Sub,Diff,Subst1),
        nonint_ev(R1,Pid1,Rest1,R2,Pid2,Rest2,Subst1,NewSub) ).
-%% nonint_ev(R1,Pid1,[Ev1|Rest1],R2,Pid2,[Ev2|Rest2],Sub,NewSub) :-
-%%     action(Ev1,receive(tuple(tcp,Port1,Binary1))),
-%%     action(Ev2,receive(tuple(tcp,Port2,Binary2))),
-%%     !,
-%%     term_equal(Port1,Port2,Sub),
-%%     ( Binary1==Binary2 ->
-%%       nonint_ev(R1,Pid1,Rest1,R2,Pid2,Rest2,Sub,NewSub);
-%%       put_assoc(Binary2,Sub,Binary1,Subst1),
-%%       nonint_ev(R1,Pid1,Rest1,R2,Pid2,Rest2,Subst1,NewSub) ).
-%% nonint_ev(R1,Pid1,[Ev1|Rest1],R2,Pid2,[Ev2|Rest2],Sub,NewSub) :-
-%%     action(Ev1,receive(tuple(reference(Ref1),tuple(ok,Binary1)))),
-%%     action(Ev2,receive(tuple(reference(Ref2),tuple(ok,Binary2)))),
-%%     !,
-%%     ( Binary1==Binary2 ->
-%%       nonint_ev(R1,Pid1,Rest1,R2,Pid2,Rest2,Sub,NewSub);
-%%       put_assoc(Binary2,Sub,Binary1,Subst1),
-%%       put_assoc(Ref2,Subst1,Ref1,Subst2),
-%%       nonint_ev(R1,Pid1,Rest1,R2,Pid2,Rest2,Subst2,NewSub) ).
 nonint_ev(R1,Pid1,[Ev1|Rest1],R2,Pid2,[Ev2|Rest2],Sub,NewSub) :-
     action(Ev1,spawn(PidN1,Value1)),
     action(Ev2,spawn(PidN2,Value2)),
@@ -259,31 +241,41 @@ term_equal(Action1,Action2,Sub) :-
 diff(A1,A2,Subst) :-
     diff(A1,A2,[],Subst).
 diff(T,T,Subst,Subst) :- !.
-diff(binary(B1),binary(B2),Subst,[subst(binary(B1),binary(B2))|Subst]) :- !.
+diff(binary(B1),binary(B2),Subst,[binary(B2)-binary(B1)|Subst]) :- !.
+diff(pid(B1),pid(B2),Subst,[pid(B2)-pid(B1)|Subst]) :- !.
+diff(reference(B1),reference(B2),Subst,[reference(B2)-reference(B1)|Subst]) :- !.
+diff(port(B1),port(B2),Subst,[port(B2)-port(B1)|Subst]) :- !.
 diff(T1,T2,Subst,NewSubst) :-
-    compound(T1), compound(T2), T1 =.. [Functor1|Args1], T2 =.. [Functor2|Args2],
+    compound(T1), compound(T2),
+    T1 =.. [Functor1|Args1], T2 =.. [Functor2|Args2],
     !,
     ( Functor1==Functor2 ->
       diffArgs(Args1,Args2,Subst,NewSubst);
       diff(Functor1,Functor2,Subst,NewSubst) ).
-diff(T1,T2,Subst,[T1-T2|Subst]).
+diff(T1,T2,Subst,[T2-T1|Subst]).
 diffArgs([],[],Subst,Subst).
 diffArgs([First1|Rest1],[First2|Rest2],Subst,NewSubst) :-
     diff(First1,First2,Subst,Subst1),
     diffArgs(Rest1,Rest2,Subst1,NewSubst).
 
-update_assoc_from_list(Subst,[],Subst).
-update_assoc_from_list(Subst,[From-To|Rest],NewSubst) :-
-    uppdate_assoc(Subst,From,To,Subst1),
-    update_assoc_from_list(Subst1,Rest,NewSubst).
+update_assoc_from_diff(Subst,[],Subst).
+update_assoc_from_diff(Subst,[From-To|Rest],NewSubst) :-
+    update_assoc_from_diff(Subst,From,To,Subst1),
+    update_assoc_from_diff(Subst1,Rest,NewSubst).
 
-update_assoc_from_list(Subst,From,To,NewSubst) :-
-    From = binary(Binary1), To = binary(Binary2)
-    put_assoc(Binary2,Subst,Binary1,NewSubst).
-update_assoc_from_list(Subst,From,To,NewSubst) :-
-    From = reference(Ref1), To = reference(Ref2),
-    put_assoc(Ref2,Subst,Ref1,NewSubst).
-update_assoc_from_list(_,From,To,_) :-
+update_assoc_from_diff(Subst,From,To,NewSubst) :-
+    From = binary(_), To = binary(_), !,
+    put_assoc(From,Subst,To,NewSubst).
+update_assoc_from_diff(Subst,From,To,NewSubst) :-
+    From = reference(_), To = reference(_), !,
+    put_assoc(From,Subst,To,NewSubst).
+update_assoc_from_diff(Subst,From,To,NewSubst) :-
+    From = pid(_), To = pid(_), !,
+    put_assoc(From,Subst,To,NewSubst).
+update_assoc_from_diff(Subst,From,To,NewSubst) :-
+    From = port(_), To = port(_), !,
+    put_assoc(From,Subst,To,NewSubst).
+update_assoc_from_diff(_,From,To,_) :-
     format('Terms ~w and ~w are not identical.~n',[From,To]),
     fail.
 
