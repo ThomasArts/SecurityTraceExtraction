@@ -141,6 +141,15 @@ nonint_ev(R1,Pid1,[Ev1|Rest1],R2,Pid2,[Ev2|Rest2],Sub,NewSub) :-
       put_assoc(Binary2,Sub,Binary1,Subst1),
       nonint_ev(R1,Pid1,Rest1,R2,Pid2,Rest2,Subst1,NewSub) ).
 nonint_ev(R1,Pid1,[Ev1|Rest1],R2,Pid2,[Ev2|Rest2],Sub,NewSub) :-
+    action(Ev1,spawn(PidN1,Value1)),
+    action(Ev2,spawn(PidN2,Value2)),
+    !,
+    term_equal(Value1,Value2,Sub),
+    ( PidN1==PidN2 ->
+      nonint_ev(R1,Pid1,Rest1,R2,Pid2,Rest2,Sub,NewSub);
+      put_assoc(PidN2,Sub,PidN1,Subst1),
+      nonint_ev(R1,Pid1,Rest1,R2,Pid2,Rest2,Subst1,NewSub) ).
+nonint_ev(R1,Pid1,[Ev1|Rest1],R2,Pid2,[Ev2|Rest2],Sub,NewSub) :-
     isSpecialCallEvent(Ev1), isSpecialCallEvent(Ev2), !,
     nonint_calls(Ev1,Ev2,Sub,Sub1),
     nonint_ev(R1,Pid1,Rest1,R2,Pid2,Rest2,Sub1,NewSub).
@@ -260,10 +269,48 @@ term_subst(Term,SubTerm,Sub) :-
 
 is_binary_subst(binary(_)-binary(_)).
 
+strip_binaries(binary(B1)-binary(B2),B1-B2).
+
 binary_subst(Binary,SubstBinary,Sub) :-
     assoc_to_list(Sub,SubList),
     include(is_binary_subst,SubList,Binaries),
-    binary_ops(Binary,SubstBinary,Binaries).
+    maplist(strip_binaries,Binaries,StrippedBinaries),
+    !,
+    rewrite(Binary,SubstBinary,StrippedBinaries).
+
+%% Rewrite a binary using a set of substitutions, recursing over the binary reducing it in size
+rewrite([],[],_).
+rewrite(Binary,SubstBinary,Binaries) :-
+    rewrite_here(Binary,Subst,RemainingBinary,Binaries),
+    rewrite(RemainingBinary,NewSubst,Binaries),
+    append(Subst,NewSubst,SubstBinary).
+rewrite([First|Rest],[First|SubstBinary],Binaries) :-
+    rewrite(Rest,SubstBinary,Binaries).
+
+% Recurse over all possible substitutions, starting to rewrite at the first character of the binary
+rewrite_here(Binary,SubstBinary,RemainingBinary,[From-To|_]) :-
+    rewrite_here(Binary,SubstBinary,RemainingBinary,From,To).
+rewrite_here(Binary,SubstBinary,RemainingBinary,[_|Rest]) :-
+    rewrite_here(Binary,SubstBinary,RemainingBinary,Rest).
+
+%% With a binary and a substitution, look for a prefix of the binary somewhere within the substitution.
+rewrite_here(Binary,SubstBinary,RemainingBinary,From,To) :-
+    rewrite_with_from(Binary,SubstBinary,RemainingBinary,From,To,0).
+rewrite_here(Binary,SubstBinary,RemainingBinary,[_|RestFrom],[_|RestTo]) :-
+    rewrite_here(Binary,SubstBinary,RemainingBinary,RestFrom,RestTo).
+
+%% Match a prefix of the binary with a prefix of from, with length at least N (heuristic)
+% end of binary
+rewrite_with_from([],[],[],_,_,N) :-
+    N >= 5.
+% end of from
+rewrite_with_from(Binary,[],Binary,[],_,N) :-
+    N >= 5.
+rewrite_with_from([First|Binary],[FirstTo|Subst],RemainingBinary,[First|RestFrom],[FirstTo|RestTo],N) :-
+    N1 is N+1,
+    rewrite_with_from(Binary,Subst,RemainingBinary,RestFrom,RestTo,N1).
+rewrite_with_from(Binary,[],Binary,_,_,N) :-
+    N >= 5.
 
 binary_ops(Binary,SubstBinary,Binaries) :-
     do_binary_shrink(Binary,SubstBinary,Binaries),
