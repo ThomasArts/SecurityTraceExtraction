@@ -292,23 +292,24 @@ do_binary_merge(Binary,SubstBinary,[binary(From)-binary(To)|Rest]) :-
     do_binary_merge(Binary1,SubstBinary,Rest).
 
 binary_merge_subst(Binary,SubstBinary,From,To) :-
-    length(Binary,BLen),
-    length(From,FromLen),
-    binary_merge_subst(Binary,BLen,SubstBinary,From,FromLen,To).
+    binary_merge_subst1(Binary,SubstBinary,From,To).
     %format('~n~nbinary_merge_subst ~w   FROM   ~w   TO   ~w   RESULTS   ~w~n',[Binary,From,To,SubstBinary]).
 
-binary_merge_subst([],_,[],_,_,_) :- !.
-binary_merge_subst(Binary,BLen,Binary,_,FromLen,_) :-
-    FromLen > BLen, !.
-binary_merge_subst(Binary,_,SubstBinary,From,_,To) :-
-    replace_prefix(Binary,From,To,SubstBinary), !.
-binary_merge_subst([First|Rest],BLen,[First|SubstBinary],From,FromLen,To) :-
-    NewBLen is BLen-1,
-    binary_merge_subst(Rest,NewBLen,SubstBinary,From,FromLen,To).
+binary_merge_subst1([],[],_,_) :- !.
+binary_merge_subst1(Binary,SubstBinary,From,To) :-
+    Binary=[First|_], From=[First|_],
+    replace_prefix(Binary,From,To,SubstBinary,0), !.
+binary_merge_subst1([First|Rest],[First|SubstBinary],From,To) :-
+    binary_merge_subst1(Rest,SubstBinary,From,To).
 
-replace_prefix(Binary,[],_,Binary).
-replace_prefix([First|RestBinary],[First|RestFrom],[FirstTo|RestTo],[FirstTo|RestSubst]) :-
-    replace_prefix(RestBinary,RestFrom,RestTo,RestSubst).
+replace_prefix(Binary,[],_,Binary,_) :- !.
+replace_prefix([First|RestBinary],[First|RestFrom],[FirstTo|RestTo],[FirstTo|RestSubst],N) :-
+    !,
+    N1 is N+1,
+    replace_prefix(RestBinary,RestFrom,RestTo,RestSubst,N1).
+replace_prefix(RestBinary,_,_,RestBinary,N) :-
+    %% Heuristic
+    N > 7.
 
 terms_subst([],[],_).
 terms_subst([T1|Rest],[SubT|SubRest],Sub) :-
