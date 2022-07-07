@@ -141,23 +141,32 @@ nonint_ev(R1,Pid1,[Ev1|Rest1],R2,Pid2,[Ev2|Rest2],Sub,NewSub) :-
     nonint_returns(Ev1,Ev2,Sub,Sub1),
     nonint_ev(R1,Pid1,Rest1,R2,Pid2,Rest2,Sub1,NewSub).
 nonint_ev(R1,Pid1,[Ev1|Rest1],R2,Pid2,[Ev2|Rest2],Sub,NewSub) :-
-    action(Ev1,receive(tuple(tcp,Port1,Binary1))),
-    action(Ev2,receive(tuple(tcp,Port2,Binary2))),
-    !,
-    term_equal(Port1,Port2,Sub),
-    ( Binary1==Binary2 ->
-      nonint_ev(R1,Pid1,Rest1,R2,Pid2,Rest2,Sub,NewSub);
-      put_assoc(Binary2,Sub,Binary1,Subst1),
-      nonint_ev(R1,Pid1,Rest1,R2,Pid2,Rest2,Subst1,NewSub) ).
-nonint_ev(R1,Pid1,[Ev1|Rest1],R2,Pid2,[Ev2|Rest2],Sub,NewSub) :-
-    action(Ev1,receive(tuple(reference(Ref1),tuple(ok,Binary1)))),
-    action(Ev2,receive(tuple(reference(Ref2),tuple(ok,Binary2)))),
-    !,
-    ( Binary1==Binary2 ->
-      nonint_ev(R1,Pid1,Rest1,R2,Pid2,Rest2,Sub,NewSub);
-      put_assoc(Binary2,Sub,Binary1,Subst1),
-      put_assoc(Ref2,Subst1,Ref1,Subst2),
-      nonint_ev(R1,Pid1,Rest1,R2,Pid2,Rest2,Subst2,NewSub) ).
+     action(Ev1,receive(Msg1),
+     action(Ev2,receive(Msg2),
+     !,
+     ( Msg1==Msg2 ->
+       nonint_ev(R1,Pid1,Rest1,R2,Pid2,Rest2,Sub,NewSub);
+       diff(Msg1,Msg2,Diff),
+       update_assoc_from_diff(Sub,Diff,NewSub),
+       nonint_ev(R1,Pid1,Rest1,R2,Pid2,Rest2,Subst1,NewSub) ).
+%% nonint_ev(R1,Pid1,[Ev1|Rest1],R2,Pid2,[Ev2|Rest2],Sub,NewSub) :-
+%%     action(Ev1,receive(tuple(tcp,Port1,Binary1))),
+%%     action(Ev2,receive(tuple(tcp,Port2,Binary2))),
+%%     !,
+%%     term_equal(Port1,Port2,Sub),
+%%     ( Binary1==Binary2 ->
+%%       nonint_ev(R1,Pid1,Rest1,R2,Pid2,Rest2,Sub,NewSub);
+%%       put_assoc(Binary2,Sub,Binary1,Subst1),
+%%       nonint_ev(R1,Pid1,Rest1,R2,Pid2,Rest2,Subst1,NewSub) ).
+%% nonint_ev(R1,Pid1,[Ev1|Rest1],R2,Pid2,[Ev2|Rest2],Sub,NewSub) :-
+%%     action(Ev1,receive(tuple(reference(Ref1),tuple(ok,Binary1)))),
+%%     action(Ev2,receive(tuple(reference(Ref2),tuple(ok,Binary2)))),
+%%     !,
+%%     ( Binary1==Binary2 ->
+%%       nonint_ev(R1,Pid1,Rest1,R2,Pid2,Rest2,Sub,NewSub);
+%%       put_assoc(Binary2,Sub,Binary1,Subst1),
+%%       put_assoc(Ref2,Subst1,Ref1,Subst2),
+%%       nonint_ev(R1,Pid1,Rest1,R2,Pid2,Rest2,Subst2,NewSub) ).
 nonint_ev(R1,Pid1,[Ev1|Rest1],R2,Pid2,[Ev2|Rest2],Sub,NewSub) :-
     action(Ev1,spawn(PidN1,Value1)),
     action(Ev2,spawn(PidN2,Value2)),
@@ -257,11 +266,26 @@ diff(T1,T2,Subst,NewSubst) :-
     ( Functor1==Functor2 ->
       diffArgs(Args1,Args2,Subst,NewSubst);
       diff(Functor1,Functor2,Subst,NewSubst) ).
-diff(T1,T2,Subst,[subst(T1,T2)|Subst]).
+diff(T1,T2,Subst,[T1-T2|Subst]).
 diffArgs([],[],Subst,Subst).
 diffArgs([First1|Rest1],[First2|Rest2],Subst,NewSubst) :-
     diff(First1,First2,Subst,Subst1),
     diffArgs(Rest1,Rest2,Subst1,NewSubst).
+
+update_assoc_from_list(Subst,[],Subst).
+update_assoc_from_list(Subst,[From-To|Rest],NewSubst) :-
+    uppdate_assoc(Subst,From,To,Subst1),
+    update_assoc_from_list(Subst1,Rest,NewSubst).
+
+update_assoc_from_list(Subst,From,To,NewSubst) :-
+    From = binary(Binary1), To = binary(Binary2)
+    put_assoc(Binary2,Subst,Binary1,NewSubst).
+update_assoc_from_list(Subst,From,To,NewSubst) :-
+    From = reference(Ref1), To = reference(Ref2),
+    put_assoc(Ref2,Subst,Ref1,NewSubst).
+update_assoc_from_list(_,From,To,_) :-
+    format('Terms ~w and ~w are not identical.~n',[From,To]),
+    fail.
 
 pid_equal(Pid1,Pid2,Sub) :-
     ( get_assoc(Pid2,Sub,Pid1) ->
