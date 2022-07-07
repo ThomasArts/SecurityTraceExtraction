@@ -37,6 +37,7 @@ isNormalReturnEvent(Event) :-
                   ,{enacl,curve25519_scalarmult,2}
                   ,{enoise_crypto_basics,padding,2}
                   ,{enacl,aead_chacha20poly1305_encrypt,4}
+                  ,{base64,decode,1}
                   %%,{enoise,gen_tcp_rcv_msg,2}
               ]).
 isSpecialCallEvent(Event) :-
@@ -106,7 +107,14 @@ nonint(R1,R2) :-
       nonint(R1,Ps1,R2,Ps2) ).
 
 nonint(R1,Ps1,R2,Ps2) :-
-    list_to_assoc(["msg2"-"msg1"],Subst),
+    list_to_assoc(
+	[
+	    "msg2"-"msg1"
+	    ,"/home/fred/gits/enoise_verification/SecurityTraceExceptionFred/signal_extract/_build/test/lib/signal_extract/priv/testing_keys2"-"/home/fred/gits/enoise_verification/SecurityTraceExceptionFred/signal_extract/_build/test/lib/signal_extract/priv/testing_keys"
+	    ,"/home/fred/gits/enoise_verification/SecurityTraceExceptionFred/signal_extract/_build/test/lib/signal_extract/priv/testing_keys2/client_key_25519"-"/home/fred/gits/enoise_verification/SecurityTraceExceptionFred/signal_extract/_build/test/lib/signal_extract/priv/testing_keys/client_key_25519"
+	    ,"/home/fred/gits/enoise_verification/SecurityTraceExceptionFred/signal_extract/_build/test/lib/signal_extract/priv/testing_keys2/client_key_25519.pub"-"/home/fred/gits/enoise_verification/SecurityTraceExceptionFred/signal_extract/_build/test/lib/signal_extract/priv/testing_keys/client_key_25519.pub"
+	    ,"/home/fred/gits/enoise_verification/SecurityTraceExceptionFred/signal_extract/_build/test/lib/signal_extract/priv/testing_keys2/server_key_25519.pub"-"/home/fred/gits/enoise_verification/SecurityTraceExceptionFred/signal_extract/_build/test/lib/signal_extract/priv/testing_keys/server_key_25519.pub"
+	],Subst),
     nonint(R1,Ps1,R2,Ps2,Subst).
 
 nonint(_,[],_,[],_) :- !.
@@ -141,6 +149,15 @@ nonint_ev(R1,Pid1,[Ev1|Rest1],R2,Pid2,[Ev2|Rest2],Sub,NewSub) :-
       nonint_ev(R1,Pid1,Rest1,R2,Pid2,Rest2,Sub,NewSub);
       put_assoc(Binary2,Sub,Binary1,Subst1),
       nonint_ev(R1,Pid1,Rest1,R2,Pid2,Rest2,Subst1,NewSub) ).
+nonint_ev(R1,Pid1,[Ev1|Rest1],R2,Pid2,[Ev2|Rest2],Sub,NewSub) :-
+    action(Ev1,receive(tuple(reference(Ref1),tuple(ok,Binary1)))),
+    action(Ev2,receive(tuple(reference(Ref2),tuple(ok,Binary2)))),
+    !,
+    ( Binary1==Binary2 ->
+      nonint_ev(R1,Pid1,Rest1,R2,Pid2,Rest2,Sub,NewSub);
+      put_assoc(Binary2,Sub,Binary1,Subst1),
+      put_assoc(Ref2,Subst1,Ref1,Subst2),
+      nonint_ev(R1,Pid1,Rest1,R2,Pid2,Rest2,Subst2,NewSub) ).
 nonint_ev(R1,Pid1,[Ev1|Rest1],R2,Pid2,[Ev2|Rest2],Sub,NewSub) :-
     action(Ev1,spawn(PidN1,Value1)),
     action(Ev2,spawn(PidN2,Value2)),
@@ -201,6 +218,8 @@ nonint_returns(enacl,crypto_sign_ed25519_secret_to_curve25519,1,Value1,Value2,Su
 nonint_returns(enacl,crypto_sign_ed25519_public_to_curve25519,1,Value1,Value2,Sub,NewSub) :-
     !, put_assoc(Value2,Sub,Value1,NewSub).
 nonint_returns(enoise_crypto_basics,padding,2,Value1,Value2,Sub,NewSub) :-
+    !, put_assoc(Value2,Sub,Value1,NewSub).
+nonint_returns(base64,decode,1,Value1,Value2,Sub,NewSub) :-
     !, put_assoc(Value2,Sub,Value1,NewSub).
 nonint_returns(enacl,generichash,2,tuple(ok,Value1),tuple(ok,Value2),Sub,NewSub) :-
     !, put_assoc(Value2,Sub,Value1,NewSub).

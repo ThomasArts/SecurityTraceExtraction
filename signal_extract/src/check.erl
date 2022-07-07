@@ -62,11 +62,11 @@ nonints() ->
   os:cmd("cat nonint1.pl nonint2.pl > nonints.pl").
 
 nonint_check1() ->
-  check_and_generate("XK","25519","ChaChaPoly","BLAKE2b","nonint1.trace",[{message,<<"msg1">>}]),
+  check_and_generate("XK","25519","ChaChaPoly","BLAKE2b","nonint1.trace",[{message,<<"msg1">>},{keyDir,"testing_keys"}]),
   signal_extract:trace_to_prolog("nonint1.trace","nonint1.pl",r1).
 
 nonint_check2() ->
-  check_and_generate("XK","25519","ChaChaPoly","BLAKE2b","nonint2.trace",[{message,<<"msg2">>}]),
+  check_and_generate("XK","25519","ChaChaPoly","BLAKE2b","nonint2.trace",[{message,<<"msg2">>},{keyDir,"testing_keys2"}]),
   signal_extract:trace_to_prolog("nonint2.trace","nonint2.pl",r2).
 
 check(FileName) ->
