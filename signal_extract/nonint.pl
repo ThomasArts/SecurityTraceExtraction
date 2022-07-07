@@ -313,52 +313,6 @@ rewrite_with_from([First|Binary],[FirstTo|Subst],RemainingBinary,[First|RestFrom
 rewrite_with_from(Binary,[],Binary,_,_,N) :-
     N >= 5.
 
-binary_ops(Binary,SubstBinary,Binaries) :-
-    do_binary_shrink(Binary,SubstBinary,Binaries),
-    !.
-binary_ops(Binary,SubstBinary,Binaries) :-
-    do_binary_merge(Binary,SubstBinary,Binaries),
-    !.
-
-do_binary_shrink(Binary,SubstBinary,[binary(From)-binary(To)|_]) :-
-    binary_shrink_subst(Binary,SubstBinary,From,To), !.
-do_binary_shrink(Binary,SubstBinary,[_|Rest]) :-
-    do_binary_shrink(Binary,SubstBinary,Rest).
-
-binary_shrink_subst(Binary,SubstBinary,From,To) :-
-    find_binary(Binary,SubstBinary,From,To), !.
-binary_shrink_subst(Binary,SubstBinary,[_|RestFrom],[_|RestTo]) :-
-    binary_shrink_subst(Binary,SubstBinary,RestFrom,RestTo).
-
-find_binary([],[],_,_).
-find_binary([First|RestBinary],[FirstTo|Subst1],[First|RestFrom],[FirstTo|RestTo]) :-
-    find_binary(RestBinary,Subst1,RestFrom,RestTo).
-
-do_binary_merge(Binary,Binary,[]).
-do_binary_merge(Binary,SubstBinary,[binary(From)-binary(To)|Rest]) :-
-    binary_merge_subst(Binary,Binary1,From,To),
-    do_binary_merge(Binary1,SubstBinary,Rest).
-
-binary_merge_subst(Binary,SubstBinary,From,To) :-
-    binary_merge_subst1(Binary,SubstBinary,From,To).
-    %format('~n~nbinary_merge_subst ~w   FROM   ~w   TO   ~w   RESULTS   ~w~n',[Binary,From,To,SubstBinary]).
-
-binary_merge_subst1([],[],_,_) :- !.
-binary_merge_subst1(Binary,SubstBinary,From,To) :-
-    Binary=[First|_], From=[First|_],
-    replace_prefix(Binary,From,To,SubstBinary,0), !.
-binary_merge_subst1([First|Rest],[First|SubstBinary],From,To) :-
-    binary_merge_subst1(Rest,SubstBinary,From,To).
-
-replace_prefix(Binary,[],_,Binary,_) :- !.
-replace_prefix([First|RestBinary],[First|RestFrom],[FirstTo|RestTo],[FirstTo|RestSubst],N) :-
-    !,
-    N1 is N+1,
-    replace_prefix(RestBinary,RestFrom,RestTo,RestSubst,N1).
-replace_prefix(RestBinary,_,_,RestBinary,N) :-
-    %% Heuristic
-    N > 7.
-
 terms_subst([],[],_).
 terms_subst([T1|Rest],[SubT|SubRest],Sub) :-
     term_subst(T1,SubT,Sub),

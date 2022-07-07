@@ -31,6 +31,10 @@ For more debugging output try instead:
     
     $ rebar shell --config config/logger.config 
    
+Creating new keys
+-----------------
+
+New keys (ed25519, etc) can be created using the echo-keygen program distributed with noise-c (https://rweather.github.io/noise-c/example_echo.html)
 
 
 
