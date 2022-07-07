@@ -118,7 +118,8 @@ nonint(R1,process(R1,Pid1,Events1),R2,process(R2,Pid2,Events2),Sub,NewSub) :-
     put_assoc(Pid2,Sub,Pid1,Sub1),
     nonint_ev(R1,Pid1,Events1,R2,Pid2,Events2,Sub1,NewSub).
 
-nonint_ev(_,_,[],_,_,[],Sub,Sub).
+nonint_ev(_,_,[],_,_,[],Sub,Sub) :-
+    format('~n~nTerminated non-interference check successfully.~n').
 nonint_ev(R1,Pid1,[Ev1|Rest1],R2,Pid2,Evs2,Sub,NewSub) :-
     isHighEvent(Ev1), !, nonint_ev(R1,Pid1,Rest1,R2,Pid2,Evs2,Sub,NewSub).
 nonint_ev(R1,Pid1,Evs1,R2,Pid2,[Ev2|Rest2],Sub,NewSub) :-
