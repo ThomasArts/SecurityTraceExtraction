@@ -70,6 +70,10 @@ highModules(
 highCalls(
     [
 	{erlang,setelement,3}
+        ,{proc_lib,init_p,5}
+        ,{gen,init_it,6}
+        ,{gen_server,init_it,6}
+        ,{erlang,'++',2}
     ]).
 
 
@@ -135,13 +139,14 @@ collapseEvents([Event|Rest],[Event|CollapsedCalls]) :-
     action(Event,call(M,F,Args)),
     length(Args,Arity),
     isCollapsableCall(M,F,Arity), !,
-    collapse(M,F,Arity,Rest,[],CollapsedCalls).
+    ( collapse(M,F,Arity,Rest,[],CollapsedCalls) ->
+      true;
+      io:format('*** ERROR. collapsed call to ~w:~w/~w at event ~w did not terminate.~n',[M,F,Arity,Event]),
+      fail).
+
 collapseEvents([Event|Rest],[Event|CollapsedCalls]) :-
     collapseEvents(Rest,CollapsedCalls).
 
-collapse(M,F,Arity,[],_,_) :-
-    io:format('*** ERROR. collapsed call to ~w:~w/~w which did not terminate.~n',[M,F,Arity]),
-    fail.
 collapse(M,F,Arity,[Event|Rest],Stack,CollapsedCalls) :-
     action(Event,call(M,F,Args)),
     length(Args,Arity),
