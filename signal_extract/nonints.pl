@@ -1711,18 +1711,6 @@ event(pid('<0.317.0>'),return_from(inet,setopts,2,ok),timestamp(1657,192163,5835
 event(pid('<0.317.0>'),return_from(enoise_connection,set_active,1,ok),timestamp(1657,192163,583598),r1).
 event(pid('<0.317.0>'),return_from(enoise_connection,handle_info,2,tuple(noreply,tuple(state,tuple(noise_cs,binary([124,18,246,166,232,41,206,18,85,48,249,210,2,121,72,200,125,201,243,114,171,252,205,200,67,202,62,4,21,210,130,75]),1,'ChaChaPoly'),tuple(noise_cs,binary([251,237,207,27,242,134,183,238,79,177,132,193,160,18,117,80,96,30,234,243,73,155,49,126,22,98,196,160,63,175,140,83]),1,'ChaChaPoly'),pid('<0.316.0>'),reference('#Ref<0.321695302.1129578499.221378>'),port('#Port<0.34>'),tuple(once,true),[],binary([])))),timestamp(1657,192163,583599),r1).
 event(pid('<0.316.0>'),receive(tuple(noise,tuple(enoise,pid('<0.317.0>')),binary("msg1"))),timestamp(1657,192163,583603),r1).
-event(pid('<0.316.0>'),call(io,format,["got message ~p~n",[binary("msg1")]]),timestamp(1657,192163,583607),r1).
-event(pid('<0.316.0>'),call(erlang,group_leader,[]),timestamp(1657,192163,583609),r1).
-event(pid('<0.316.0>'),return_from(erlang,group_leader,0,pid('<0.306.0>')),timestamp(1657,192163,583610),r1).
-event(pid('<0.316.0>'),call(net_kernel,dflag_unicode_io,[pid('<0.306.0>')]),timestamp(1657,192163,583612),r1).
-event(pid('<0.316.0>'),return_from(net_kernel,dflag_unicode_io,1,true),timestamp(1657,192163,583613),r1).
-event(pid('<0.316.0>'),call(erlang,monitor,[process,pid('<0.306.0>')]),timestamp(1657,192163,583614),r1).
-event(pid('<0.316.0>'),return_from(erlang,monitor,2,reference('#Ref<0.321695302.1129578499.221380>')),timestamp(1657,192163,583616),r1).
-event(pid('<0.316.0>'),send(tuple(io_request,pid('<0.316.0>'),reference('#Ref<0.321695302.1129578499.221380>'),tuple(put_chars,unicode,io_lib,format,["got message ~p~n",[binary("msg1")]])),pid('<0.306.0>')),timestamp(1657,192163,583617),r1).
-event(pid('<0.316.0>'),receive(tuple(io_reply,reference('#Ref<0.321695302.1129578499.221380>'),ok)),timestamp(1657,192163,583663),r1).
-event(pid('<0.316.0>'),call(erlang,demonitor,[reference('#Ref<0.321695302.1129578499.221380>'),[flush]]),timestamp(1657,192163,583667),r1).
-event(pid('<0.316.0>'),return_from(erlang,demonitor,2,true),timestamp(1657,192163,583670),r1).
-event(pid('<0.316.0>'),return_from(io,format,2,ok),timestamp(1657,192163,583671),r1).
 event(pid('<0.316.0>'),call(enoise,close,[tuple(enoise,pid('<0.317.0>'))]),timestamp(1657,192163,583672),r1).
 event(pid('<0.316.0>'),call(enoise_connection,close,[pid('<0.317.0>')]),timestamp(1657,192163,583674),r1).
 event(pid('<0.316.0>'),call(gen_server,call,[pid('<0.317.0>'),close]),timestamp(1657,192163,583675),r1).
@@ -3507,18 +3495,6 @@ event(pid('<0.323.0>'),return_from(inet,setopts,2,ok),timestamp(1657,192170,7565
 event(pid('<0.323.0>'),return_from(enoise_connection,set_active,1,ok),timestamp(1657,192170,756564),r2).
 event(pid('<0.323.0>'),return_from(enoise_connection,handle_info,2,tuple(noreply,tuple(state,tuple(noise_cs,binary([175,124,51,253,247,16,99,198,22,41,12,114,178,147,63,201,12,74,154,162,161,235,254,1,186,41,95,87,180,175,162,193]),1,'ChaChaPoly'),tuple(noise_cs,binary([165,213,30,162,87,89,136,2,1,64,63,121,29,23,228,72,73,242,88,165,221,161,43,203,111,184,65,178,67,146,148,49]),1,'ChaChaPoly'),pid('<0.322.0>'),reference('#Ref<0.321695302.1129578497.221107>'),port('#Port<0.35>'),tuple(once,true),[],binary([])))),timestamp(1657,192170,756565),r2).
 event(pid('<0.322.0>'),receive(tuple(noise,tuple(enoise,pid('<0.323.0>')),binary("msg2"))),timestamp(1657,192170,756570),r2).
-event(pid('<0.322.0>'),call(io,format,["got message ~p~n",[binary("msg2")]]),timestamp(1657,192170,756574),r2).
-event(pid('<0.322.0>'),call(erlang,group_leader,[]),timestamp(1657,192170,756576),r2).
-event(pid('<0.322.0>'),return_from(erlang,group_leader,0,pid('<0.306.0>')),timestamp(1657,192170,756577),r2).
-event(pid('<0.322.0>'),call(net_kernel,dflag_unicode_io,[pid('<0.306.0>')]),timestamp(1657,192170,756580),r2).
-event(pid('<0.322.0>'),return_from(net_kernel,dflag_unicode_io,1,true),timestamp(1657,192170,756581),r2).
-event(pid('<0.322.0>'),call(erlang,monitor,[process,pid('<0.306.0>')]),timestamp(1657,192170,756582),r2).
-event(pid('<0.322.0>'),return_from(erlang,monitor,2,reference('#Ref<0.321695302.1129578497.221109>')),timestamp(1657,192170,756584),r2).
-event(pid('<0.322.0>'),send(tuple(io_request,pid('<0.322.0>'),reference('#Ref<0.321695302.1129578497.221109>'),tuple(put_chars,unicode,io_lib,format,["got message ~p~n",[binary("msg2")]])),pid('<0.306.0>')),timestamp(1657,192170,756585),r2).
-event(pid('<0.322.0>'),receive(tuple(io_reply,reference('#Ref<0.321695302.1129578497.221109>'),ok)),timestamp(1657,192170,756630),r2).
-event(pid('<0.322.0>'),call(erlang,demonitor,[reference('#Ref<0.321695302.1129578497.221109>'),[flush]]),timestamp(1657,192170,756634),r2).
-event(pid('<0.322.0>'),return_from(erlang,demonitor,2,true),timestamp(1657,192170,756636),r2).
-event(pid('<0.322.0>'),return_from(io,format,2,ok),timestamp(1657,192170,756637),r2).
 event(pid('<0.322.0>'),call(enoise,close,[tuple(enoise,pid('<0.323.0>'))]),timestamp(1657,192170,756639),r2).
 event(pid('<0.322.0>'),call(enoise_connection,close,[pid('<0.323.0>')]),timestamp(1657,192170,756640),r2).
 event(pid('<0.322.0>'),call(gen_server,call,[pid('<0.323.0>'),close]),timestamp(1657,192170,756641),r2).
@@ -3589,5 +3565,4 @@ event(pid('<0.322.0>'),return_from(enoise_connection,close,1,ok),timestamp(1657,
 event(pid('<0.322.0>'),return_from(enoise,close,1,ok),timestamp(1657,192170,756808),r2).
 event(pid('<0.322.0>'),return_from(enoise_test,client_test,7,ok),timestamp(1657,192170,756809),r2).
 event(pid('<0.322.0>'),send(tuple(pid('<0.322.0>'),stopped,ok),pid('<0.309.0>')),timestamp(1657,192170,756810),r2).
-event(pid('<0.322.0>'),return_from(erlang,apply,2,tuple(pid('<0.322.0>'),stopped,ok)),timestamp(1657,192170,756811),r2).
 event(pid('<0.322.0>'),exit(normal),timestamp(1657,192170,756812),r2).

@@ -42,7 +42,6 @@ client_test(Handshake,DH,Crypto,Hash,KnowsRS,Message,KeyDir) ->
   ok = enoise:send(EConn, Message),
   receive
     {noise, EConn, OtherMsg} ->
-      io:format("got message ~p~n",[OtherMsg]),
       ok
   after 2000 -> error(timeout) end,
   enoise:close(EConn).

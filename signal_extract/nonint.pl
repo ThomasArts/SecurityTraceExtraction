@@ -7,12 +7,16 @@ run(Run,Processes) :-
 
 process(Run,process(Run,Pid,Events)) :-
     events(Run,Pid,UnsortedEvents),
-    predsort(timeOrder,UnsortedEvents,Events).
+    predsort(timeOrder,UnsortedEvents,SortedEvents),
+    collapseEvents(SortedEvents,Events).
 
 pid(event(Pid,_,_,_), Pid).
 time(event(_,_,TimeStamp,_),TimeStamp).
 action(event(_,Action,_,_),Action).
 runId(event(_,_,_,Run),Run).
+eventType(Event,ActionType) :-
+    action(Event,Action),
+    Action =.. [ActionType|_].
 
 isLinkEvent(Event) :-
     action(Event,link(_)).
@@ -28,6 +32,7 @@ isNormalReturnEvent(Event) :-
                   ,{erlang,monitor,2}
                   ,{inet,start_timer,1}
                   ,{erlang,make_ref,0}
+		  ,{erlang,spawn_opt,4}
                   ,{inet,timeout,1}
                   ,{erts_internal,open_port,2}
                   ,{enacl,crypto_sign_ed25519_keypair,0}
@@ -37,7 +42,9 @@ isNormalReturnEvent(Event) :-
                   ,{enacl,curve25519_scalarmult,2}
                   ,{enoise_crypto_basics,padding,2}
                   ,{enacl,aead_chacha20poly1305_encrypt,4}
+		  ,{get_key,get_key,3}
                   ,{base64,decode,1}
+		  ,{erlang,open_port,2}
                   %%,{enoise,gen_tcp_rcv_msg,2}
               ]).
 isSpecialCallEvent(Event) :-
@@ -48,6 +55,10 @@ isSpecialCallEvent(Event) :-
                {erlang,port_control,3}
                ,{erts_internal,port_control,3}
            ]).
+
+isLowEvent(Event,Subst) :-
+    action(Event,send(_,Pid)),
+    \+ get_assoc(enoise(Pid),Subst,_).
 
 module(Event,M) :-
     action(Event,call(M,_,_)).
@@ -78,6 +89,39 @@ low_events(low_events(Pid,LowEvents)) :-
     code(codes(Pid,Events)),
     include(is_low_event,Events,LowEvents).
 
+isCollapsableCall(file,read_file,1).
+isCollapsableCall(get_key,get_key,3).
+isCollapsableCall(erlang,open_port,2).
+
+collapseEvents([],[]).
+collapseEvents([Event|Rest],[Event|CollapsedCalls]) :-
+    isCallEvent(Event),
+    action(Event,call(M,F,Args)),
+    length(Args,Arity),
+    isCollapsableCall(M,F,Arity), !,
+    collapse(M,F,Arity,Rest,[],CollapsedCalls).
+collapseEvents([Event|Rest],[Event|CollapsedCalls]) :-
+    collapseEvents(Rest,CollapsedCalls).
+
+collapse(M,F,Arity,[],_,_) :-
+    io:format('*** ERROR. collapsed call to ~w:~w/~w which did not terminate.~n',[M,F,Arity]),
+    fail.
+collapse(M,F,Arity,[Event|Rest],Stack,CollapsedCalls) :-
+    action(Event,call(M,F,Args)),
+    length(Args,Arity),
+    !,
+    collapse(M,F,Arity,Rest,[Event|Stack],CollapsedCalls).
+collapse(M,F,Arity,[Event|Rest],[],[Event|CollapsedCalls]) :-
+    action(Event,return_from(M,F,Arity,_)),
+    !,
+    collapseEvents(Rest,CollapsedCalls).
+collapse(M,F,Arity,[Event|Rest],[_|RestStack],CollapsedCalls) :-
+    action(Event,return_from(M,F,Arity)),
+    !,
+    collapse(M,F,Arity,Rest,RestStack,CollapsedCalls).
+collapse(M,F,Arity,[_|Rest],Stack,CollapsedCalls) :-
+    collapse(M,F,Arity,Rest,Stack,CollapsedCalls).
+
 spawnedFirst(Delta,process(_,_,[Event1|_]),process(_,_,[Event2|_])) :-
     time(Event1,Time1),
     time(Event2,Time2),
@@ -98,8 +142,12 @@ lt_or_equal_time('=',T,T) :- !.
 lt_or_equal_time('>',_,_) :- !.
 
 nonint(R1,R2) :-
+    open("nonint_traces.pl", write, Stream),
     run(R1,Ps1),
     run(R2,Ps2),
+    dump_run(Ps1,Stream),
+    dump_run(Ps2,Stream),
+    close(Stream),
     length(Ps1,P1len),
     length(Ps2,P2len),
     ( (P1len =\= P2len); (P1len==0) ->
@@ -107,9 +155,16 @@ nonint(R1,R2) :-
       nonint(R1,Ps1,R2,Ps2) ).
 
 nonint(R1,Ps1,R2,Ps2) :-
+    [process(R1,Pid1,_)|_] = Ps1,
+    [process(R2,Pid2,_)|_] = Ps2,
     list_to_assoc(
 	[
 	    "msg2"-"msg1"
+
+	    %% First processes are high
+	    ,enoise(Pid1)-enoise
+	    ,enoise(Pid2)-enoise
+
 	    ,"/home/fred/gits/enoise_verification/SecurityTraceExceptionFred/signal_extract/_build/test/lib/signal_extract/priv/testing_keys2"-"/home/fred/gits/enoise_verification/SecurityTraceExceptionFred/signal_extract/_build/test/lib/signal_extract/priv/testing_keys"
 	    ,"/home/fred/gits/enoise_verification/SecurityTraceExceptionFred/signal_extract/_build/test/lib/signal_extract/priv/testing_keys2/client_key_25519"-"/home/fred/gits/enoise_verification/SecurityTraceExceptionFred/signal_extract/_build/test/lib/signal_extract/priv/testing_keys/client_key_25519"
 	    ,"/home/fred/gits/enoise_verification/SecurityTraceExceptionFred/signal_extract/_build/test/lib/signal_extract/priv/testing_keys2/client_key_25519.pub"-"/home/fred/gits/enoise_verification/SecurityTraceExceptionFred/signal_extract/_build/test/lib/signal_extract/priv/testing_keys/client_key_25519.pub"
@@ -124,47 +179,67 @@ nonint(R1,[P1|Rest1],R2,[P2|Rest2],Sub) :-
 
 nonint(R1,process(R1,Pid1,Events1),R2,process(R2,Pid2,Events2),Sub,NewSub) :-
     put_assoc(Pid2,Sub,Pid1,Sub1),
-    nonint_ev(R1,Pid1,Events1,R2,Pid2,Events2,Sub1,NewSub).
+    nonint(R1,Pid1,Events1,R2,Pid2,Events2,Sub1,NewSub).
 
-nonint_ev(_,_,[],_,_,[],Sub,Sub) :-
-    format('~n~nTerminated non-interference check successfully.~n').
-nonint_ev(R1,Pid1,[Ev1|Rest1],R2,Pid2,Evs2,Sub,NewSub) :-
-    isHighEvent(Ev1), !, nonint_ev(R1,Pid1,Rest1,R2,Pid2,Evs2,Sub,NewSub).
-nonint_ev(R1,Pid1,Evs1,R2,Pid2,[Ev2|Rest2],Sub,NewSub) :-
-    isHighEvent(Ev2), !, nonint_ev(R1,Pid1,Evs1,R2,Pid2,Rest2,Sub,NewSub).
-nonint_ev(R1,Pid1,[Ev1|Rest1],R2,Pid2,Evs2,Sub,NewSub) :-
-    isNormalReturnEvent(Ev1), !, nonint_ev(R1,Pid1,Rest1,R2,Pid2,Evs2,Sub,NewSub).
-nonint_ev(R1,Pid1,Evs1,R2,Pid2,[Ev2|Rest2],Sub,NewSub) :-
-    isNormalReturnEvent(Ev2), !, nonint_ev(R1,Pid1,Evs1,R2,Pid2,Rest2,Sub,NewSub).
-nonint_ev(R1,Pid1,[Ev1|Rest1],R2,Pid2,[Ev2|Rest2],Sub,NewSub) :-
+nonint(_,_,[],_,_,[],Sub,Sub) :-
+    format('~n~nTerminated non-interference check successfully.~n'), !.
+nonint(R1,Pid1,[Ev1|Rest1],R2,Pid2,[Ev2|Rest2],Sub,NewSub) :-
+    isLowEvent(Ev1,Sub), !,
+    nonint_low(R1,Pid1,Ev1,Rest1,R2,Pid2,Ev2,Rest2,Sub,NewSub).
+nonint(R1,Pid1,[Ev1|Rest1],R2,Pid2,[Ev2|Rest2],Sub,NewSub) :-
+    isLowEvent(Ev2,Sub), !,
+    nonint_low(R1,Pid1,Ev1,Rest1,R2,Pid2,Ev2,Rest2,Sub,NewSub).
+nonint(R1,Pid1,[Ev1|Rest1],R2,Pid2,[Ev2|Rest2],Sub,NewSub) :-
+    nonint_high(R1,Pid1,[Ev1|Rest1],R2,Pid2,[Ev2|Rest2],Sub,NewSub).
+
+nonint_low(R1,Pid1,Ev1,Rest1,R2,Pid2,Ev2,Rest2,Sub,NewSub) :-
+    assoc_to_list(Sub,SubList),
+    include(lowSubst,SubList,LowSubList),
+    list_to_assoc(LowSubList,LowSub),
+    ( equal_events(Ev1,Ev2,LowSub) ->
+      nonint(R1,Pid1,Rest1,R2,Pid2,Rest2,Sub,NewSub);
+      format('~n Low events~n   ~w~n and~n    ~w~n are not equal.~n',[Ev1,Ev2]),
+      fail ).
+
+lowSubst(pid(_)-pid(_)) :- !.
+lowSubst(reference(_)-reference(_)) :- !.
+
+%%nonint_ev(R1,Pid1,[Ev1|Rest1],R2,Pid2,Evs2,Sub,NewSub) :-
+%%    isHighEvent(Ev1), !, nonint_ev(R1,Pid1,Rest1,R2,Pid2,Evs2,Sub,NewSub).
+%%nonint_ev(R1,Pid1,Evs1,R2,Pid2,[Ev2|Rest2],Sub,NewSub) :-
+%%    isHighEvent(Ev2), !, nonint_ev(R1,Pid1,Evs1,R2,Pid2,Rest2,Sub,NewSub).
+nonint_high(R1,Pid1,[Ev1|Rest1],R2,Pid2,[Ev2|Rest2],Sub,NewSub) :-
+    isNormalReturnEvent(Ev1), isNormalReturnEvent(Ev2), !,
+    nonint(R1,Pid1,Rest1,R2,Pid2,Rest2,Sub,NewSub).
+nonint_high(R1,Pid1,[Ev1|Rest1],R2,Pid2,[Ev2|Rest2],Sub,NewSub) :-
     isReturnEvent(Ev1), isReturnEvent(Ev2), !,
     nonint_returns(Ev1,Ev2,Sub,Sub1),
-    nonint_ev(R1,Pid1,Rest1,R2,Pid2,Rest2,Sub1,NewSub).
-nonint_ev(R1,Pid1,[Ev1|Rest1],R2,Pid2,[Ev2|Rest2],Sub,NewSub) :-
+    nonint(R1,Pid1,Rest1,R2,Pid2,Rest2,Sub1,NewSub).
+nonint_high(R1,Pid1,[Ev1|Rest1],R2,Pid2,[Ev2|Rest2],Sub,NewSub) :-
      action(Ev1,receive(Msg1)),
      action(Ev2,receive(Msg2)),
      !,
      ( Msg1==Msg2 ->
-       nonint_ev(R1,Pid1,Rest1,R2,Pid2,Rest2,Sub,NewSub);
+       nonint(R1,Pid1,Rest1,R2,Pid2,Rest2,Sub,NewSub);
        diff(Msg1,Msg2,Diff),
        update_assoc_from_diff(Sub,Diff,Subst1),
-       nonint_ev(R1,Pid1,Rest1,R2,Pid2,Rest2,Subst1,NewSub) ).
-nonint_ev(R1,Pid1,[Ev1|Rest1],R2,Pid2,[Ev2|Rest2],Sub,NewSub) :-
+       nonint(R1,Pid1,Rest1,R2,Pid2,Rest2,Subst1,NewSub) ).
+nonint_high(R1,Pid1,[Ev1|Rest1],R2,Pid2,[Ev2|Rest2],Sub,NewSub) :-
     action(Ev1,spawn(PidN1,Value1)),
     action(Ev2,spawn(PidN2,Value2)),
     !,
     term_equal(Value1,Value2,Sub),
     ( PidN1==PidN2 ->
-      nonint_ev(R1,Pid1,Rest1,R2,Pid2,Rest2,Sub,NewSub);
+      nonint(R1,Pid1,Rest1,R2,Pid2,Rest2,Sub,NewSub);
       put_assoc(PidN2,Sub,PidN1,Subst1),
-      nonint_ev(R1,Pid1,Rest1,R2,Pid2,Rest2,Subst1,NewSub) ).
-nonint_ev(R1,Pid1,[Ev1|Rest1],R2,Pid2,[Ev2|Rest2],Sub,NewSub) :-
+      nonint(R1,Pid1,Rest1,R2,Pid2,Rest2,Subst1,NewSub) ).
+nonint_high(R1,Pid1,[Ev1|Rest1],R2,Pid2,[Ev2|Rest2],Sub,NewSub) :-
     isSpecialCallEvent(Ev1), isSpecialCallEvent(Ev2), !,
     nonint_calls(Ev1,Ev2,Sub,Sub1),
-    nonint_ev(R1,Pid1,Rest1,R2,Pid2,Rest2,Sub1,NewSub).
-nonint_ev(R1,Pid1,[Ev1|Rest1],R2,Pid2,[Ev2|Rest2],Sub,NewSub) :-
+    nonint(R1,Pid1,Rest1,R2,Pid2,Rest2,Sub1,NewSub).
+nonint_high(R1,Pid1,[Ev1|Rest1],R2,Pid2,[Ev2|Rest2],Sub,NewSub) :-
     ( equal_events(Ev1,Ev2,Sub) ->
-      nonint_ev(R1,Pid1,Rest1,R2,Pid2,Rest2,Sub,NewSub) ;
+      nonint(R1,Pid1,Rest1,R2,Pid2,Rest2,Sub,NewSub) ;
       format('~n Events~n   ~w~n and~n    ~w~n are not equal.~n',[Ev1,Ev2]),
       fail ).
 
@@ -186,6 +261,14 @@ nonint_returns(Return1,Return2,Sub,NewSub) :-
 
 nonint_returns(binary,compile_pattern,1,Value1,Value2,Sub,NewSub) :-
     !, put_assoc(Value2,Sub,Value1,NewSub).
+nonint_returns(get_key,get_key,3,Value1,Value2,Sub,NewSub) :-
+    !, put_assoc(Value2,Sub,Value1,NewSub).
+nonint_returns(erlang,open_port,2,Value1,Value2,Sub,NewSub) :-
+    !, put_assoc(Value2,Sub,Value1,NewSub).
+nonint_returns(erlang,spawn_opt,4,Value1,Value2,Sub,NewSub) :-
+    !,
+    put_assoc(enoise(Value2),Sub,enoise,Subst1),
+    put_assoc(enoise(Value1),Subst1,enoise,NewSub).
 nonint_returns(erlang,monitor,2,Value1,Value2,Sub,NewSub) :-
     !, put_assoc(Value2,Sub,Value1,NewSub).
 nonint_returns(inet,start_timer,1,Value1,Value2,Sub,NewSub) :-
@@ -193,8 +276,6 @@ nonint_returns(inet,start_timer,1,Value1,Value2,Sub,NewSub) :-
 nonint_returns(erlang,make_ref,0,Value1,Value2,Sub,NewSub) :-
     !, put_assoc(Value2,Sub,Value1,NewSub).
 nonint_returns(inet,timeout,1,Value1,Value2,Sub,NewSub) :-
-    !, put_assoc(Value2,Sub,Value1,NewSub).
-nonint_returns(erts_internal,open_port,2,Value1,Value2,Sub,NewSub) :-
     !, put_assoc(Value2,Sub,Value1,NewSub).
 nonint_returns(enacl,crypto_sign_ed25519_keypair,0,Map1,Map2,Sub,NewSub) :-
     Map1=map([tuple(public,Public1),tuple(secret,Secret1)]),
@@ -373,6 +454,15 @@ type(T,atomic) :-
 type(T,compound) :-
     compound(T).
 
+dump_run([],_).
+dump_run([process(_,_,Events)|Rest],Stream) :-
+    dump_events(Events,Stream),
+    dump_run(Rest,Stream).
+
+dump_events([],_).
+dump_events([Event|Rest],Stream) :-
+    format(Stream,'~w.~n',[Event]),
+    dump_events(Rest,Stream).
 
     
 
