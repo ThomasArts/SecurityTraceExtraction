@@ -45,6 +45,7 @@ isNormalReturnEvent(Event) :-
 		  ,{get_key,get_key,3}
                   ,{base64,decode,1}
 		  ,{erlang,open_port,2}
+		  ,{gen_tcp,connect,4}
                   %%,{enoise,gen_tcp_rcv_msg,2}
               ]).
 isSpecialCallEvent(Event) :-
@@ -56,9 +57,31 @@ isSpecialCallEvent(Event) :-
                ,{erts_internal,port_control,3}
            ]).
 
+highModules(
+    [
+	enoise, enoise_test, enoise_crypto, enoise_crypto_basics,
+	enoise_hs_state, enoise_keypair, enoise_protocol, enoise_sym_state, 
+	enoise_cipher_state, enoise_connection,
+	enacl, enacl_nif, get_key,
+	proplists, lists, maps
+    ]).
+
+highCalls(
+    [
+	{erlang,setelement,3}
+    ]).
+
 isLowEvent(Event,Subst) :-
     action(Event,send(_,Pid)),
     \+ get_assoc(enoise(Pid),Subst,_).
+isLowEvent(Event,_Subst) :-
+    action(Event,call(M,F,Args)),
+    length(Args,Arity),
+    highModules(HModules),
+    \+ member(M,HModules),
+    highCalls(HCalls),
+    \+ member({M,F,Arity},HCalls).
+    
 
 module(Event,M) :-
     action(Event,call(M,_,_)).
@@ -92,6 +115,7 @@ low_events(low_events(Pid,LowEvents)) :-
 isCollapsableCall(file,read_file,1).
 isCollapsableCall(get_key,get_key,3).
 isCollapsableCall(erlang,open_port,2).
+isCollapsableCall(gen_tcp,connect,4).
 
 collapseEvents([],[]).
 collapseEvents([Event|Rest],[Event|CollapsedCalls]) :-
@@ -203,6 +227,7 @@ nonint_low(R1,Pid1,Ev1,Rest1,R2,Pid2,Ev2,Rest2,Sub,NewSub) :-
 
 lowSubst(pid(_)-pid(_)) :- !.
 lowSubst(reference(_)-reference(_)) :- !.
+lowSubst(port(_)-port(_)) :- !.
 
 %%nonint_ev(R1,Pid1,[Ev1|Rest1],R2,Pid2,Evs2,Sub,NewSub) :-
 %%    isHighEvent(Ev1), !, nonint_ev(R1,Pid1,Rest1,R2,Pid2,Evs2,Sub,NewSub).
@@ -264,6 +289,8 @@ nonint_returns(binary,compile_pattern,1,Value1,Value2,Sub,NewSub) :-
 nonint_returns(get_key,get_key,3,Value1,Value2,Sub,NewSub) :-
     !, put_assoc(Value2,Sub,Value1,NewSub).
 nonint_returns(erlang,open_port,2,Value1,Value2,Sub,NewSub) :-
+    !, put_assoc(Value2,Sub,Value1,NewSub).
+nonint_returns(gen_tcp,connect,4,tuple(ok,Value1),tuple(ok,Value2),Sub,NewSub) :-
     !, put_assoc(Value2,Sub,Value1,NewSub).
 nonint_returns(erlang,spawn_opt,4,Value1,Value2,Sub,NewSub) :-
     !,
