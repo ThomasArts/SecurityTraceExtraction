@@ -46,6 +46,7 @@ isNormalReturnEvent(Event) :-
                   ,{base64,decode,1}
 		  ,{erlang,open_port,2}
 		  ,{gen_tcp,connect,4}
+                  ,{gen_server,start_link,3}
                   %%,{enoise,gen_tcp_rcv_msg,2}
               ]).
 isSpecialCallEvent(Event) :-
@@ -71,17 +72,24 @@ highCalls(
 	{erlang,setelement,3}
     ]).
 
+
+highSpecialCall(gen_tcp,send,[Port,_],Subst) :-
+    get_assoc(enoise(Port),Subst,_).
+highSpecialCall(gen_server,start_link,[enoise_connection,_,_],_).
+highSpecialCall(gen_server,call,[Pid,_],Subst) :-
+    get_assoc(enoise(Pid),Subst,_).
+
 isLowEvent(Event,Subst) :-
     action(Event,send(_,Pid)),
     \+ get_assoc(enoise(Pid),Subst,_).
-isLowEvent(Event,_Subst) :-
+isLowEvent(Event,Subst) :-
     action(Event,call(M,F,Args)),
     length(Args,Arity),
     highModules(HModules),
     \+ member(M,HModules),
     highCalls(HCalls),
-    \+ member({M,F,Arity},HCalls).
-    
+    \+ member({M,F,Arity},HCalls),
+    \+ highSpecialCall(M,F,Args,Subst).
 
 module(Event,M) :-
     action(Event,call(M,_,_)).
@@ -116,6 +124,10 @@ isCollapsableCall(file,read_file,1).
 isCollapsableCall(get_key,get_key,3).
 isCollapsableCall(erlang,open_port,2).
 isCollapsableCall(gen_tcp,connect,4).
+isCollapsableCall(gen_tcp,send,2).
+isCollapsableCall(gen_server,start_link,3).
+isCollapsableCall(gen_server,call,2).
+isCollapsableCall(gen_server,call,3).
 
 collapseEvents([],[]).
 collapseEvents([Event|Rest],[Event|CollapsedCalls]) :-
@@ -228,6 +240,7 @@ nonint_low(R1,Pid1,Ev1,Rest1,R2,Pid2,Ev2,Rest2,Sub,NewSub) :-
 lowSubst(pid(_)-pid(_)) :- !.
 lowSubst(reference(_)-reference(_)) :- !.
 lowSubst(port(_)-port(_)) :- !.
+lowSubst(enoise(_)-_) :- !.
 
 %%nonint_ev(R1,Pid1,[Ev1|Rest1],R2,Pid2,Evs2,Sub,NewSub) :-
 %%    isHighEvent(Ev1), !, nonint_ev(R1,Pid1,Rest1,R2,Pid2,Evs2,Sub,NewSub).
@@ -291,13 +304,22 @@ nonint_returns(get_key,get_key,3,Value1,Value2,Sub,NewSub) :-
 nonint_returns(erlang,open_port,2,Value1,Value2,Sub,NewSub) :-
     !, put_assoc(Value2,Sub,Value1,NewSub).
 nonint_returns(gen_tcp,connect,4,tuple(ok,Value1),tuple(ok,Value2),Sub,NewSub) :-
-    !, put_assoc(Value2,Sub,Value1,NewSub).
+    !,
+    put_assoc(enoise(Value2),Sub,enoise,Subst1),
+    put_assoc(enoise(Value1),Subst1,enoise,Subst2),
+    put_assoc(Value2,Subst2,Value1,NewSub).
 nonint_returns(erlang,spawn_opt,4,Value1,Value2,Sub,NewSub) :-
     !,
     put_assoc(enoise(Value2),Sub,enoise,Subst1),
-    put_assoc(enoise(Value1),Subst1,enoise,NewSub).
+    put_assoc(enoise(Value1),Subst1,enoise,Subst2),
+    put_assoc(Value2,Subst2,Value1,NewSub).
 nonint_returns(erlang,monitor,2,Value1,Value2,Sub,NewSub) :-
     !, put_assoc(Value2,Sub,Value1,NewSub).
+nonint_returns(gen_server,start_link,3,tuple(ok,Value1),tuple(ok,Value2),Sub,NewSub) :-
+    !,
+    put_assoc(enoise(Value2),Sub,enoise,Subst1),
+    put_assoc(enoise(Value1),Subst1,enoise,Subst2),
+    put_assoc(Value2,Subst2,Value1,NewSub).
 nonint_returns(inet,start_timer,1,Value1,Value2,Sub,NewSub) :-
     !, put_assoc(Value2,Sub,Value1,NewSub).
 nonint_returns(erlang,make_ref,0,Value1,Value2,Sub,NewSub) :-
