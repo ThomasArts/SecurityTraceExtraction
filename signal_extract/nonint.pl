@@ -1,9 +1,13 @@
 isEvent(event(Pid,Event,Time,RunId)) :-
     event(Pid,Event,Time,RunId).
 
+:- table run/2.
+
 run(Run,Processes) :-
     findall(P, process(Run,P), UnsortedProcesses),
     predsort(spawnedFirst,UnsortedProcesses,Processes).
+
+:- table process/2.
 
 process(Run,process(Run,Pid,Events)) :-
     events(Run,Pid,UnsortedEvents),
@@ -137,31 +141,42 @@ collapseEvents([],[]).
 collapseEvents([Event|Rest],[Event|CollapsedCalls]) :-
     isCallEvent(Event),
     action(Event,call(M,F,Args)),
+    pid(Event,Pid),
     length(Args,Arity),
     isCollapsableCall(M,F,Arity), !,
-    ( collapse(M,F,Arity,Rest,[],CollapsedCalls) ->
+    format('collapsing ~w:~w/~w on pid ~w~n',[M,F,Arity,Pid]),
+    ( collapse(Rest,[Event],CollapsedCalls) ->
       true;
-      io:format('*** ERROR. collapsed call to ~w:~w/~w at event ~w did not terminate.~n',[M,F,Arity,Event]),
+      format('*** ERROR. collapsed call to ~w:~w/~w at event ~w did not terminate~n',[M,F,Arity,Event]),
       fail).
-
 collapseEvents([Event|Rest],[Event|CollapsedCalls]) :-
     collapseEvents(Rest,CollapsedCalls).
 
-collapse(M,F,Arity,[Event|Rest],Stack,CollapsedCalls) :-
-    action(Event,call(M,F,Args)),
-    length(Args,Arity),
+collapse([],Stack,[exited]) :-
+    format('*** Warning: a collapsed call did not terminate. Stack:~n~w~n',[Stack]).
+collapse([Event|Rest],Stack,CollapsedCalls) :-
+    action(Event,call(_,_,_)),
     !,
-    collapse(M,F,Arity,Rest,[Event|Stack],CollapsedCalls).
-collapse(M,F,Arity,[Event|Rest],[],[Event|CollapsedCalls]) :-
+    collapse(Rest,[Event|Stack],CollapsedCalls).
+collapse([Event|Rest],Stack,CollapsedCalls) :-
+    [LastCallEvent|RestStack] = Stack,
+    action(LastCallEvent,call(M,F,Args)), length(Args,Arity),
     action(Event,return_from(M,F,Arity,_)),
+    length(RestStack,N),
+    format('matched call ~w/~w:~w, rest of stack is of size ~w~n',[M,F,Arity,N]),
     !,
-    collapseEvents(Rest,CollapsedCalls).
-collapse(M,F,Arity,[Event|Rest],[_|RestStack],CollapsedCalls) :-
-    action(Event,return_from(M,F,Arity)),
+    ( RestStack == [] ->
+      CollapsedCalls=[Event|CollapsedCalls1],
+      collapseEvents(Rest,CollapsedCalls1);
+      collapse(Rest,RestStack,CollapsedCalls) ).
+collapse([Event|_],[LastCallEvent|_],_) :-
+    action(LastCallEvent,call(M,F,Args)), length(Args,Arity),
+    action(Event,return_from(M1,F1,Arity1)),
     !,
-    collapse(M,F,Arity,Rest,RestStack,CollapsedCalls).
-collapse(M,F,Arity,[_|Rest],Stack,CollapsedCalls) :-
-    collapse(M,F,Arity,Rest,Stack,CollapsedCalls).
+    format('*** ERROR: expected a return from call ~w:~w/~w but got a return from ~w:~w/~w~nat event ~w.~n',[M,F,Arity,M1,F1,Arity1,Event]),
+    fail.
+collapse([_|Rest],Stack,CollapsedCalls) :-
+    collapse(Rest,Stack,CollapsedCalls).
 
 spawnedFirst(Delta,process(_,_,[Event1|_]),process(_,_,[Event2|_])) :-
     time(Event1,Time1),
@@ -186,16 +201,20 @@ nonint(R1,R2) :-
     open("nonint_traces.pl", write, Stream),
     run(R1,Ps1),
     run(R2,Ps2),
+    format('in nonint/2~n'),
     dump_run(Ps1,Stream),
     dump_run(Ps2,Stream),
+    format('after dump_run~n'),
     close(Stream),
     length(Ps1,P1len),
     length(Ps2,P2len),
     ( (P1len =\= P2len); (P1len==0) ->
-      format('~nRuns ~w and ~p creates a zero or different number of processes.~n',[R1,R2]);
+                             format('~nRuns ~w and ~p creates a zero or different number of processes.~n',[R1,R2]),
+                             fail;
       nonint(R1,Ps1,R2,Ps2) ).
 
 nonint(R1,Ps1,R2,Ps2) :-
+    format('in real nonint~n'),
     [process(R1,Pid1,_)|_] = Ps1,
     [process(R2,Pid2,_)|_] = Ps2,
     list_to_assoc(
@@ -207,23 +226,26 @@ nonint(R1,Ps1,R2,Ps2) :-
 	    ,enoise(Pid2)-enoise
 
 	    ,"/home/fred/gits/enoise_verification/SecurityTraceExceptionFred/signal_extract/_build/test/lib/signal_extract/priv/testing_keys2"-"/home/fred/gits/enoise_verification/SecurityTraceExceptionFred/signal_extract/_build/test/lib/signal_extract/priv/testing_keys"
-	    ,"/home/fred/gits/enoise_verification/SecurityTraceExceptionFred/signal_extract/_build/test/lib/signal_extract/priv/testing_keys2/client_key_25519"-"/home/fred/gits/enoise_verification/SecurityTraceExceptionFred/signal_extract/_build/test/lib/signal_extract/priv/testing_keys/client_key_25519"
-	    ,"/home/fred/gits/enoise_verification/SecurityTraceExceptionFred/signal_extract/_build/test/lib/signal_extract/priv/testing_keys2/client_key_25519.pub"-"/home/fred/gits/enoise_verification/SecurityTraceExceptionFred/signal_extract/_build/test/lib/signal_extract/priv/testing_keys/client_key_25519.pub"
-	    ,"/home/fred/gits/enoise_verification/SecurityTraceExceptionFred/signal_extract/_build/test/lib/signal_extract/priv/testing_keys2/server_key_25519.pub"-"/home/fred/gits/enoise_verification/SecurityTraceExceptionFred/signal_extract/_build/test/lib/signal_extract/priv/testing_keys/server_key_25519.pub"
 	],Subst),
+    format('before nonint starting~n'),
     nonint(R1,Ps1,R2,Ps2,Subst).
 
 nonint(_,[],_,[],_) :- !.
 nonint(R1,[P1|Rest1],R2,[P2|Rest2],Sub) :-
     nonint(R1,P1,R2,P2,Sub,NewSub),
+    !,
     nonint(R1,Rest1,R2,Rest2,NewSub).
 
 nonint(R1,process(R1,Pid1,Events1),R2,process(R2,Pid2,Events2),Sub,NewSub) :-
+    format('nonint_proc~n'),
     put_assoc(Pid2,Sub,Pid1,Sub1),
+    format('nonint_proc 2~n'),
     nonint(R1,Pid1,Events1,R2,Pid2,Events2,Sub1,NewSub).
 
 nonint(_,_,[],_,_,[],Sub,Sub) :-
-    format('~n~nTerminated non-interference check successfully.~n'), !.
+    !, format('~n~nTerminated non-interference check successfully.~n').
+nonint(_,_,[exited],_,_,[exited],Sub,Sub) :-
+    !, format('~n~nTerminated non-interference check successfully.~n').
 nonint(R1,Pid1,[Ev1|Rest1],R2,Pid2,[Ev2|Rest2],Sub,NewSub) :-
     isLowEvent(Ev1,Sub), !,
     nonint_low(R1,Pid1,Ev1,Rest1,R2,Pid2,Ev2,Rest2,Sub,NewSub).
@@ -231,7 +253,11 @@ nonint(R1,Pid1,[Ev1|Rest1],R2,Pid2,[Ev2|Rest2],Sub,NewSub) :-
     isLowEvent(Ev2,Sub), !,
     nonint_low(R1,Pid1,Ev1,Rest1,R2,Pid2,Ev2,Rest2,Sub,NewSub).
 nonint(R1,Pid1,[Ev1|Rest1],R2,Pid2,[Ev2|Rest2],Sub,NewSub) :-
+    isEvent(Ev1), isEvent(Ev2), !,
     nonint_high(R1,Pid1,[Ev1|Rest1],R2,Pid2,[Ev2|Rest2],Sub,NewSub).
+nontint(_,_,[First1|_],_,_,[First2|_],_,_) :-
+    format('*** Error: ~w or ~w are not events.~n',[First1,First2]),
+    fail.
 
 nonint_low(R1,Pid1,Ev1,Rest1,R2,Pid2,Ev2,Rest2,Sub,NewSub) :-
     assoc_to_list(Sub,SubList),
@@ -508,15 +534,23 @@ type(T,atomic) :-
 type(T,compound) :-
     compound(T).
 
-dump_run([],_).
+dump_run([],_) :- !.
 dump_run([process(_,_,Events)|Rest],Stream) :-
+    !,
     dump_events(Events,Stream),
     dump_run(Rest,Stream).
+dump_run(Other,_) :-
+    format('*** ERROR: dump_run has an incorrect format:~n~w~n',[Other]),
+    fail.
 
-dump_events([],_).
+dump_events([],_) :- !.
 dump_events([Event|Rest],Stream) :-
+    !,
     format(Stream,'~w.~n',[Event]),
     dump_events(Rest,Stream).
+dump_events(Other,_) :-
+    format('*** ERROR: dump_events has an incorrect format:~n~w~n',[Other]),
+    fail.
 
     
 
