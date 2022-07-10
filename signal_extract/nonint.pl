@@ -43,13 +43,19 @@ isTrustedCall(To) :-
                ,{gen,init_it,6}
                ,{gen_server,init_it,6}
                ,{erlang,'++',2}
+               ,{erlang,list_to_atom,1}
+               ,{erlang,atom_to_list,1}
+               ,{erlang,list_to_binary,1}
+               ,{inet,getopts,2}
+               ,{inet,setopts,2}
+               ,{gen_tcp,controlling_process,2}
            ]).
 
 isTrustedModule(M) :-
     member(M,        
            [
 	       enacl, enacl_nif, get_key,
-	       proplists, lists, maps
+	       proplists, lists, string, maps
            ]).
 
 
@@ -92,15 +98,17 @@ isNormalReturnEvent(Event) :-
                   ,{gen_server,start_link,3}
               ]).
 
-%% Is the event a low event, i.e., a call from enoise code
-%% to an untrusted function.
+%% Is the event a low event, i.e., an event originating from enoise code
+%% to an untrusted (but permitted) function.
 isLowEvent(Event,Subst) :-
-    action(Event,send(_,Pid)),
+    action(Event,send(_,Pid)), !,
+    context_event(Event,Context),
+    enoise_context(Context),
     \+ get_assoc(enoise(Pid),Subst,_).
 isLowEvent(Event,Subst) :-
-    action(Event,call(M,F,Args)),
+    action(Event,call(M,F,Args)), !,
     length(Args,Arity),
-    context_call(Event,Context),
+    context_event(Event,Context),
     enoise_context(Context),
     \+ enoise_context({M,F,Arity}),
     \+ isTrustedCall({M,F,Arity}),
@@ -143,12 +151,14 @@ nonint(R1,process(R1,Pid1,Events1),R2,process(R2,Pid2,Events2),Sub,NewSub) :-
 
 nonint(_,_,[],_,_,[],Sub,Sub) :-
     !, format('~n~nTerminated non-interference check successfully.~n').
-nonint(R1,Pid1,[Ev1|Rest1],R2,Pid2,[Ev2|Rest2],Sub,NewSub) :-
+nonint(_R1,_Pid1,[Ev1|_Rest1],_R2,_Pid2,_,Sub,_NewSub) :-
     isLowEvent(Ev1,Sub), !,
-    nonint_low(R1,Pid1,Ev1,Rest1,R2,Pid2,Ev2,Rest2,Sub,NewSub).
-nonint(R1,Pid1,[Ev1|Rest1],R2,Pid2,[Ev2|Rest2],Sub,NewSub) :-
+    format('*** Error: low event ~w issued from enoise code.~n',[Ev1]),
+    fail.
+nonint(_R1,_Pid1,_,_R2,_Pid2,[Ev2|_Rest2],Sub,_NewSub) :-
     isLowEvent(Ev2,Sub), !,
-    nonint_low(R1,Pid1,Ev1,Rest1,R2,Pid2,Ev2,Rest2,Sub,NewSub).
+    format('*** Error: low event ~w issued from enoise code.~n',[Ev2]),
+    fail.
 nonint(R1,Pid1,[Ev1|Rest1],R2,Pid2,[Ev2|Rest2],Sub,NewSub) :-
     isEvent(Ev1), isEvent(Ev2), !,
     nonint_high(R1,Pid1,[Ev1|Rest1],R2,Pid2,[Ev2|Rest2],Sub,NewSub).
@@ -501,7 +511,7 @@ calls_in_context([First|Rest],Stack,Remaining,Calls,[Fact|NewCalls]) :-
     call(M,F,Args) = Action, !,
     length(Args,Arity),
     [From|_] = Stack,
-    Fact = context_call(First,From),
+    Fact = context_event(First,From),
     assert(Fact),
     calls_in_context(Rest,[{M,F,Arity}|Stack],Remaining,Calls,NewCalls).
 calls_in_context([_|Rest],Stack,Remaining,Calls,NewCalls) :-
