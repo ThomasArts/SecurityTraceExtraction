@@ -20,9 +20,6 @@ nonint(R1,R2) :-
                              fail;
       nonint(R1,Ps1,R2,Ps2) ).
 
-isEvent(event(Pid,Event,Time,RunId)) :-
-    event(Pid,Event,Time,RunId).
-
 run(Run,Processes) :-
     findall(P, process(Run,P), UnsortedProcesses),
     predsort(spawnedFirst,UnsortedProcesses,Processes).
@@ -33,44 +30,10 @@ process(Run,process(Run,Pid,Events)) :-
     collapseEvents(SortedEvents,Events),
     callers(Events,_Calls).
 
-pid(event(Pid,_,_,_), Pid).
-time(event(_,_,TimeStamp,_),TimeStamp).
-action(event(_,Action,_,_),Action).
-runId(event(_,_,_,Run),Run).
-eventType(Event,ActionType) :-
-    action(Event,Action),
-    Action =.. [ActionType|_].
-
-isLinkEvent(Event) :-
-    action(Event,link(_)).
-isCallEvent(Event) :-
-    action(Event,call(_,_,_)).
-isReturnEvent(Event) :-
-    action(Event,return_from(_,_,_,_)).
-isNormalReturnEvent(Event) :-
-    action(Event,return_from(M,F,Arity,_)),
-    \+ member({M,F,Arity},
-              [
-                  {binary,compile_pattern,1}
-                  ,{erlang,monitor,2}
-                  ,{erlang,make_ref,0}
-		  ,{erlang,spawn_opt,4}
-                  ,{enacl,crypto_sign_ed25519_keypair,0}
-                  ,{enacl,crypto_sign_ed25519_secret_to_curve25519,1}
-                  ,{enacl,crypto_sign_ed25519_public_to_curve25519,1}
-                  ,{enacl,generichash,2}
-                  ,{enacl,curve25519_scalarmult,2}
-                  ,{enoise_crypto_basics,padding,2}
-                  ,{enacl,aead_chacha20poly1305_encrypt,4}
-		  ,{get_key,get_key,3}
-                  ,{base64,decode,1}
-		  ,{erlang,open_port,2}
-		  ,{gen_tcp,connect,4}
-                  ,{gen_server,start_link,3}
-              ]).
-
+%% An event originating from "low code" but which calls a "trusted" function, or
+%% with trusted parameters.
 isTrustedCall(To) :-
-    {M,F,Arity} = To,
+    {M,_,_} = To,
     isTrustedModule(M), !.
 isTrustedCall(To) :-
     member(To,
@@ -96,6 +59,7 @@ trustedSpecialCall(gen_server,start_link,[enoise_connection,_,_],_).
 trustedSpecialCall(gen_server,call,[Pid,_],Subst) :-
     get_assoc(enoise(Pid),Subst,_).
 
+%% Does the argument represent an enoise context (function) ?
 enoise_context({M,_,_}) :-
     member(M,
            [
@@ -104,6 +68,32 @@ enoise_context({M,_,_}) :-
 	       enoise_cipher_state, enoise_connection
            ]).
 
+%% Does the event represent a return event which called a function that
+%% either is deterministic, or does not potentially depend on high information.
+isNormalReturnEvent(Event) :-
+    action(Event,return_from(M,F,Arity,_)),
+    \+ member({M,F,Arity},
+              [
+                  {binary,compile_pattern,1}
+                  ,{erlang,monitor,2}
+                  ,{erlang,make_ref,0}
+		  ,{erlang,spawn_opt,4}
+                  ,{enacl,crypto_sign_ed25519_keypair,0}
+                  ,{enacl,crypto_sign_ed25519_secret_to_curve25519,1}
+                  ,{enacl,crypto_sign_ed25519_public_to_curve25519,1}
+                  ,{enacl,generichash,2}
+                  ,{enacl,curve25519_scalarmult,2}
+                  ,{enoise_crypto_basics,padding,2}
+                  ,{enacl,aead_chacha20poly1305_encrypt,4}
+		  ,{get_key,get_key,3}
+                  ,{base64,decode,1}
+		  ,{erlang,open_port,2}
+		  ,{gen_tcp,connect,4}
+                  ,{gen_server,start_link,3}
+              ]).
+
+%% Is the event a low event, i.e., a call from enoise code
+%% to an untrusted function.
 isLowEvent(Event,Subst) :-
     action(Event,send(_,Pid)),
     \+ get_assoc(enoise(Pid),Subst,_).
@@ -116,21 +106,6 @@ isLowEvent(Event,Subst) :-
     \+ isTrustedCall({M,F,Arity}),
     \+ trustedSpecialCall(M,F,Args,Subst).
 
-%%isLowEvent(Event,Subst) :-
-%%    action(Event,send(_,Pid)),
-%%    \+ get_assoc(enoise(Pid),Subst,_).
-%%isLowEvent(Event,Subst) :-
-%%    action(Event,call(M,F,Args)),
-%%    length(Args,Arity),
-%%    highModules(HModules),
-%%    \+ member(M,HModules),
-%%    highCalls(HCalls),
-%%    \+ member({M,F,Arity},HCalls),
-%%    \+ highSpecialCall(M,F,Args,Subst).
-
-module(Event,M) :-
-    action(Event,call(M,_,_)).
-
 pids(Pids) :-
     findall(Pid, ( isEvent(Event), pid(Event,Pid) ), UnsortedPids),
     sort(UnsortedPids,Pids).
@@ -141,98 +116,6 @@ events(Run,Pid,Events) :-
 low_events(low_events(Pid,LowEvents)) :-
     code(codes(Pid,Events)),
     include(is_low_event,Events,LowEvents).
-
-isCollapsableCall(file,read_file,1).
-isCollapsableCall(get_key,get_key,3).
-isCollapsableCall(erlang,open_port,2).
-isCollapsableCall(gen_tcp,connect,4).
-isCollapsableCall(gen_tcp,send,2).
-isCollapsableCall(gen_server,start_link,3).
-isCollapsableCall(gen_server,call,2).
-isCollapsableCall(gen_server,call,3).
-
-collapseEvents([],[]).
-collapseEvents([Event|Rest],[Event|CollapsedCalls]) :-
-    isCallEvent(Event),
-    action(Event,call(M,F,Args)),
-    length(Args,Arity),
-    isCollapsableCall(M,F,Arity), !,
-    collapse(Rest,[Event],CollapsedCalls).
-collapseEvents([Event|Rest],[Event|CollapsedCalls]) :-
-    collapseEvents(Rest,CollapsedCalls).
-
-collapse([],Stack,[]) :-
-    format('*** Warning: a collapsed call did not terminate. Stack:~n~w~n',[Stack]).
-collapse([Event|Rest],Stack,CollapsedCalls) :-
-    action(Event,call(_,_,_)),
-    !,
-    collapse(Rest,[Event|Stack],CollapsedCalls).
-collapse([Event|Rest],Stack,CollapsedCalls) :-
-    [LastCallEvent|RestStack] = Stack,
-    action(LastCallEvent,call(M,F,Args)), length(Args,Arity),
-    action(Event,return_from(M,F,Arity,_)),
-    !,
-    ( RestStack == [] ->
-      CollapsedCalls=[Event|CollapsedCalls1],
-      collapseEvents(Rest,CollapsedCalls1);
-      collapse(Rest,RestStack,CollapsedCalls) ).
-collapse([Event|_],[LastCallEvent|_],_) :-
-    action(LastCallEvent,call(M,F,Args)), length(Args,Arity),
-    action(Event,return_from(M1,F1,Arity1)),
-    !,
-    format('*** ERROR: expected a return from call ~w:~w/~w but got a return from ~w:~w/~w~nat event ~w.~n',[M,F,Arity,M1,F1,Arity1,Event]),
-    fail.
-collapse([_|Rest],Stack,CollapsedCalls) :-
-    collapse(Rest,Stack,CollapsedCalls).
-
-callers(Events,Calls) :-
-    callers(Events,[],Calls).
-
-callers([],Calls,Calls).
-callers([Event|Rest],Calls,NewCalls) :-
-    action(Event,Action),
-    call(M,F,Args) = Action, !,
-    length(Args,Arity),
-    calls_in_context(Rest,[{M,F,Arity}],Remaining,Calls,Calls1),
-    callers(Remaining,Calls1,NewCalls).
-callers([_|Rest],Calls,NewCalls) :-
-    callers(Rest,Calls,NewCalls).
-
-calls_in_context([],_,[],Calls,Calls).
-calls_in_context(Events,[],Events,Calls,Calls).
-calls_in_context([First|Rest],[_|Stack],Remaining,Calls,NewCalls) :-
-    isReturnEvent(First), !,
-    calls_in_context(Rest,Stack,Remaining,Calls,NewCalls).
-calls_in_context([First|Rest],Stack,Remaining,Calls,[Fact|NewCalls]) :-
-    action(First,Action),
-    call(M,F,Args) = Action, !,
-    length(Args,Arity),
-    [From|_] = Stack,
-    Fact = context_call(First,From),
-    assert(Fact),
-    calls_in_context(Rest,[{M,F,Arity}|Stack],Remaining,Calls,NewCalls).
-calls_in_context([_|Rest],Stack,Remaining,Calls,NewCalls) :-
-    calls_in_context(Rest,Stack,Remaining,Calls,NewCalls).
-
-spawnedFirst(Delta,process(_,_,[Event1|_]),process(_,_,[Event2|_])) :-
-    time(Event1,Time1),
-    time(Event2,Time2),
-    lt_or_equal_time(Delta,Time1,Time2).
-
-timeOrder(Delta,Event1,Event2) :-
-    time(Event1,Time1),
-    time(Event2,Time2),
-    lt_or_equal_time(Delta,Time1,Time2).
-
-lt_or_equal_time('<',timestamp(T1_a,_,_),timestamp(T1_b,_,_)) :-
-    T1_a < T1_b, !.
-lt_or_equal_time('<',timestamp(T1,T2_a,_),timestamp(T1,T2_b,_)) :-
-    T2_a < T2_b, !.
-lt_or_equal_time('<',timestamp(T1,T2,T3_a),timestamp(T1,T2,T3_b)) :-
-    T3_a < T3_b, !.
-lt_or_equal_time('=',T,T) :- !.
-lt_or_equal_time('>',_,_) :- !.
-
 
 nonint(R1,Ps1,R2,Ps2) :-
     [process(R1,Pid1,_)|_] = Ps1,
@@ -281,11 +164,6 @@ nonint_low(R1,Pid1,Ev1,Rest1,R2,Pid2,Ev2,Rest2,Sub,NewSub) :-
       nonint(R1,Pid1,Rest1,R2,Pid2,Rest2,Sub,NewSub);
       format('~n Low events~n   ~w~n and~n    ~w~n are not equal.~n',[Ev1,Ev2]),
       fail ).
-
-lowSubst(pid(_)-pid(_)) :- !.
-lowSubst(reference(_)-reference(_)) :- !.
-lowSubst(port(_)-port(_)) :- !.
-lowSubst(enoise(_)-_) :- !.
 
 nonint_high(R1,Pid1,[Ev1|Rest1],R2,Pid2,[Ev2|Rest2],Sub,NewSub) :-
     isNormalReturnEvent(Ev1), isNormalReturnEvent(Ev2), !,
@@ -370,6 +248,32 @@ nonint_returns(M,F,Arity,V1,V2,_,_) :-
     format('*** Error: cannot handle nonint_returns(~p,~p,~p)~nwith value1=~w~nand value2=~w.~n',[M,F,Arity,V1,V2]),
     fail.
 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+module(Event,M) :-
+    action(Event,call(M,_,_)).
+
+isEvent(event(Pid,Event,Time,RunId)) :-
+    event(Pid,Event,Time,RunId).
+
+pid(event(Pid,_,_,_), Pid).
+time(event(_,_,TimeStamp,_),TimeStamp).
+action(event(_,Action,_,_),Action).
+runId(event(_,_,_,Run),Run).
+eventType(Event,ActionType) :-
+    action(Event,Action),
+    Action =.. [ActionType|_].
+
+isLinkEvent(Event) :-
+    action(Event,link(_)).
+isCallEvent(Event) :-
+    action(Event,call(_,_,_)).
+isReturnEvent(Event) :-
+    action(Event,return_from(_,_,_,_)).
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%% Event equality (up to a substitution)
 equal_events(Ev1,Ev2,Sub) :-
     pid(Ev1,Pid1),
     action(Ev1,Action1),
@@ -378,6 +282,8 @@ equal_events(Ev1,Ev2,Sub) :-
     pid_equal(Pid1,Pid2,Sub),
     term_equal(Action1,Action2,Sub).
 
+
+%% Term equality (up to a substitution)
 term_equal(Action,Action,_) :- !.
 term_equal(Action1,Action2,Sub) :-
     term_subst(Action2,SubAction2,Sub),
@@ -386,47 +292,6 @@ term_equal(Action1,Action2,Sub) :-
       assoc_to_list(Sub,SubList),
       diff(Action1,SubAction2,SubstDiff),
       format('Terms~n  ~w~n and~n  ~w~n do not match;~n second term substituted:~n  ~w~n~nSubst diff:~n~w~n~nsubst=~w.~n',[Action1,Action2,SubAction2,SubstDiff,SubList]), fail ).
-
-diff(A1,A2,Subst) :-
-    diff(A1,A2,[],Subst).
-diff(T,T,Subst,Subst) :- !.
-diff(binary(B1),binary(B2),Subst,[binary(B2)-binary(B1)|Subst]) :- !.
-diff(pid(B1),pid(B2),Subst,[pid(B2)-pid(B1)|Subst]) :- !.
-diff(reference(B1),reference(B2),Subst,[reference(B2)-reference(B1)|Subst]) :- !.
-diff(port(B1),port(B2),Subst,[port(B2)-port(B1)|Subst]) :- !.
-diff(T1,T2,Subst,NewSubst) :-
-    compound(T1), compound(T2),
-    T1 =.. [Functor1|Args1], T2 =.. [Functor2|Args2],
-    !,
-    ( Functor1==Functor2 ->
-      diffArgs(Args1,Args2,Subst,NewSubst);
-      diff(Functor1,Functor2,Subst,NewSubst) ).
-diff(T1,T2,Subst,[T2-T1|Subst]).
-diffArgs([],[],Subst,Subst).
-diffArgs([First1|Rest1],[First2|Rest2],Subst,NewSubst) :-
-    diff(First1,First2,Subst,Subst1),
-    diffArgs(Rest1,Rest2,Subst1,NewSubst).
-
-update_assoc_from_diff(Subst,[],Subst).
-update_assoc_from_diff(Subst,[From-To|Rest],NewSubst) :-
-    update_assoc_from_diff(Subst,From,To,Subst1),
-    update_assoc_from_diff(Subst1,Rest,NewSubst).
-
-update_assoc_from_diff(Subst,From,To,NewSubst) :-
-    From = binary(_), To = binary(_), !,
-    put_assoc(From,Subst,To,NewSubst).
-update_assoc_from_diff(Subst,From,To,NewSubst) :-
-    From = reference(_), To = reference(_), !,
-    put_assoc(From,Subst,To,NewSubst).
-update_assoc_from_diff(Subst,From,To,NewSubst) :-
-    From = pid(_), To = pid(_), !,
-    put_assoc(From,Subst,To,NewSubst).
-update_assoc_from_diff(Subst,From,To,NewSubst) :-
-    From = port(_), To = port(_), !,
-    put_assoc(From,Subst,To,NewSubst).
-update_assoc_from_diff(_,From,To,_) :-
-    format('Terms ~w and ~w are not identical.~n',[From,To]),
-    fail.
 
 pid_equal(Pid1,Pid2,Sub) :-
     ( get_assoc(Pid2,Sub,Pid1) ->
@@ -452,9 +317,12 @@ term_subst(Term,SubTerm,Sub) :-
     terms_subst(Args,SubArgs,Sub),
     SubTerm =.. [SubFunctor|SubArgs].
 
-is_binary_subst(binary(_)-binary(_)).
+lowSubst(pid(_)-pid(_)) :- !.
+lowSubst(reference(_)-reference(_)) :- !.
+lowSubst(port(_)-port(_)) :- !.
+lowSubst(enoise(_)-_) :- !.
 
-strip_binaries(binary(B1)-binary(B2),B1-B2).
+is_binary_subst(binary(_)-binary(_)).
 
 binary_subst(Binary,SubstBinary,Sub) :-
     assoc_to_list(Sub,SubList),
@@ -510,6 +378,139 @@ try_subst(T,T,_).
 subst(T,SubT,Sub) :-
     get_assoc(T,Sub,SubT).
 
+%% Computes the difference of two terms
+diff(A1,A2,Subst) :-
+    diff(A1,A2,[],Subst).
+diff(T,T,Subst,Subst) :- !.
+diff(binary(B1),binary(B2),Subst,[binary(B2)-binary(B1)|Subst]) :- !.
+diff(pid(B1),pid(B2),Subst,[pid(B2)-pid(B1)|Subst]) :- !.
+diff(reference(B1),reference(B2),Subst,[reference(B2)-reference(B1)|Subst]) :- !.
+diff(port(B1),port(B2),Subst,[port(B2)-port(B1)|Subst]) :- !.
+diff(T1,T2,Subst,NewSubst) :-
+    compound(T1), compound(T2),
+    T1 =.. [Functor1|Args1], T2 =.. [Functor2|Args2],
+    !,
+    ( Functor1==Functor2 ->
+      diffArgs(Args1,Args2,Subst,NewSubst);
+      diff(Functor1,Functor2,Subst,NewSubst) ).
+diff(T1,T2,Subst,[T2-T1|Subst]).
+diffArgs([],[],Subst,Subst).
+diffArgs([First1|Rest1],[First2|Rest2],Subst,NewSubst) :-
+    diff(First1,First2,Subst,Subst1),
+    diffArgs(Rest1,Rest2,Subst1,NewSubst).
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%% Update environments from diff lists
+
+update_assoc_from_diff(Subst,[],Subst).
+update_assoc_from_diff(Subst,[From-To|Rest],NewSubst) :-
+    update_assoc_from_diff(Subst,From,To,Subst1),
+    update_assoc_from_diff(Subst1,Rest,NewSubst).
+
+update_assoc_from_diff(Subst,From,To,NewSubst) :-
+    From = binary(_), To = binary(_), !,
+    put_assoc(From,Subst,To,NewSubst).
+update_assoc_from_diff(Subst,From,To,NewSubst) :-
+    From = reference(_), To = reference(_), !,
+    put_assoc(From,Subst,To,NewSubst).
+update_assoc_from_diff(Subst,From,To,NewSubst) :-
+    From = pid(_), To = pid(_), !,
+    put_assoc(From,Subst,To,NewSubst).
+update_assoc_from_diff(Subst,From,To,NewSubst) :-
+    From = port(_), To = port(_), !,
+    put_assoc(From,Subst,To,NewSubst).
+update_assoc_from_diff(_,From,To,_) :-
+    format('Terms ~w and ~w are not identical.~n',[From,To]),
+    fail.
+
+%% Remove binaries from substitutions, i.e., removing potentially high information
+strip_binaries(binary(B1)-binary(B2),B1-B2).
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%% Collapsing function calls bodies
+
+isCollapsableCall(file,read_file,1).
+isCollapsableCall(get_key,get_key,3).
+isCollapsableCall(erlang,open_port,2).
+isCollapsableCall(gen_tcp,connect,4).
+isCollapsableCall(gen_tcp,send,2).
+isCollapsableCall(gen_server,start_link,3).
+isCollapsableCall(gen_server,call,2).
+isCollapsableCall(gen_server,call,3).
+
+collapseEvents([],[]).
+collapseEvents([Event|Rest],[Event|CollapsedCalls]) :-
+    isCallEvent(Event),
+    action(Event,call(M,F,Args)),
+    length(Args,Arity),
+    isCollapsableCall(M,F,Arity), !,
+    collapse(Rest,[Event],CollapsedCalls).
+collapseEvents([Event|Rest],[Event|CollapsedCalls]) :-
+    collapseEvents(Rest,CollapsedCalls).
+
+collapse([],Stack,[]) :-
+    format('*** Warning: a collapsed call did not terminate. Stack:~n~w~n',[Stack]).
+collapse([Event|Rest],Stack,CollapsedCalls) :-
+    action(Event,call(_,_,_)),
+    !,
+    collapse(Rest,[Event|Stack],CollapsedCalls).
+collapse([Event|Rest],Stack,CollapsedCalls) :-
+    [LastCallEvent|RestStack] = Stack,
+    action(LastCallEvent,call(M,F,Args)), length(Args,Arity),
+    action(Event,return_from(M,F,Arity,_)),
+    !,
+    ( RestStack == [] ->
+      CollapsedCalls=[Event|CollapsedCalls1],
+      collapseEvents(Rest,CollapsedCalls1);
+      collapse(Rest,RestStack,CollapsedCalls) ).
+collapse([Event|_],[LastCallEvent|_],_) :-
+    action(LastCallEvent,call(M,F,Args)), length(Args,Arity),
+    action(Event,return_from(M1,F1,Arity1)),
+    !,
+    format('*** ERROR: expected a return from call ~w:~w/~w but got a return from ~w:~w/~w~nat event ~w.~n',[M,F,Arity,M1,F1,Arity1,Event]),
+    fail.
+collapse([_|Rest],Stack,CollapsedCalls) :-
+    collapse(Rest,Stack,CollapsedCalls).
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%% Code to compute in which context (in which function) an event originates from
+
+callers(Events,Calls) :-
+    callers(Events,[],Calls).
+
+callers([],Calls,Calls).
+callers([Event|Rest],Calls,NewCalls) :-
+    action(Event,Action),
+    call(M,F,Args) = Action, !,
+    length(Args,Arity),
+    calls_in_context(Rest,[{M,F,Arity}],Remaining,Calls,Calls1),
+    callers(Remaining,Calls1,NewCalls).
+callers([_|Rest],Calls,NewCalls) :-
+    callers(Rest,Calls,NewCalls).
+
+calls_in_context([],_,[],Calls,Calls).
+calls_in_context(Events,[],Events,Calls,Calls).
+calls_in_context([First|Rest],[_|Stack],Remaining,Calls,NewCalls) :-
+    isReturnEvent(First), !,
+    calls_in_context(Rest,Stack,Remaining,Calls,NewCalls).
+calls_in_context([First|Rest],Stack,Remaining,Calls,[Fact|NewCalls]) :-
+    action(First,Action),
+    call(M,F,Args) = Action, !,
+    length(Args,Arity),
+    [From|_] = Stack,
+    Fact = context_call(First,From),
+    assert(Fact),
+    calls_in_context(Rest,[{M,F,Arity}|Stack],Remaining,Calls,NewCalls).
+calls_in_context([_|Rest],Stack,Remaining,Calls,NewCalls) :-
+    calls_in_context(Rest,Stack,Remaining,Calls,NewCalls).
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%% Code to dump traces to a Stream
+
 dump_run([],_) :- !.
 dump_run([process(_,_,Events)|Rest],Stream) :-
     !,
@@ -528,7 +529,31 @@ dump_events(Other,_) :-
     format('*** ERROR: dump_events has an incorrect format:~n~w~n',[Other]),
     fail.
 
-    
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%% Sorting depending on timestamps
+
+spawnedFirst(Delta,process(_,_,[Event1|_]),process(_,_,[Event2|_])) :-
+    time(Event1,Time1),
+    time(Event2,Time2),
+    lt_or_equal_time(Delta,Time1,Time2).
+
+timeOrder(Delta,Event1,Event2) :-
+    time(Event1,Time1),
+    time(Event2,Time2),
+    lt_or_equal_time(Delta,Time1,Time2).
+
+lt_or_equal_time('<',timestamp(T1_a,_,_),timestamp(T1_b,_,_)) :-
+    T1_a < T1_b, !.
+lt_or_equal_time('<',timestamp(T1,T2_a,_),timestamp(T1,T2_b,_)) :-
+    T2_a < T2_b, !.
+lt_or_equal_time('<',timestamp(T1,T2,T3_a),timestamp(T1,T2,T3_b)) :-
+    T3_a < T3_b, !.
+lt_or_equal_time('=',T,T) :- !.
+lt_or_equal_time('>',_,_) :- !.
+
+
+
 
     
     
