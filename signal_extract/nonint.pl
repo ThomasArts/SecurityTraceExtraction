@@ -16,27 +16,26 @@ nonint(R1,R2) :-
     length(Ps1,P1len),
     length(Ps2,P2len),
     ( (P1len =\= P2len); (P1len==0) ->
-                             format('~nRuns ~w and ~p creates a zero or different number of processes.~n',[R1,R2]),
+                             format('~nRuns ~w and ~p creates a zero or different number of processes: ~w and ~w.~n',[R1,R2,P1len,P2len]),
                              fail;
       nonint(R1,Ps1,R2,Ps2) ).
 
 isEvent(event(Pid,Event,Time,RunId)) :-
     event(Pid,Event,Time,RunId).
 
-%% Using tabling to speed up analysis
-:- table run/2.
-
 run(Run,Processes) :-
     findall(P, process(Run,P), UnsortedProcesses),
     predsort(spawnedFirst,UnsortedProcesses,Processes).
 
-%% Using tabling to speed up analysis
-:- table process/2.
-
 process(Run,process(Run,Pid,Events)) :-
+    format('process~n'),
     events(Run,Pid,UnsortedEvents),
     predsort(timeOrder,UnsortedEvents,SortedEvents),
-    collapseEvents(SortedEvents,Events).
+    format('before collapseEvents~n'),
+    collapseEvents(SortedEvents,Events),
+    format('Before callers~n'),
+    callers(Events,Calls),
+    format('Calls are ~w~n',[Calls]).
 
 pid(event(Pid,_,_,_), Pid).
 time(event(_,_,TimeStamp,_),TimeStamp).
@@ -155,10 +154,7 @@ collapseEvents([Event|Rest],[Event|CollapsedCalls]) :-
     action(Event,call(M,F,Args)),
     length(Args,Arity),
     isCollapsableCall(M,F,Arity), !,
-    ( collapse(Rest,[Event],CollapsedCalls) ->
-      true;
-      format('*** ERROR. collapsed call to ~w:~w/~w at event ~w did not terminate~n',[M,F,Arity,Event]),
-      fail).
+    collapse(Rest,[Event],CollapsedCalls).
 collapseEvents([Event|Rest],[Event|CollapsedCalls]) :-
     collapseEvents(Rest,CollapsedCalls).
 
@@ -185,6 +181,31 @@ collapse([Event|_],[LastCallEvent|_],_) :-
     fail.
 collapse([_|Rest],Stack,CollapsedCalls) :-
     collapse(Rest,Stack,CollapsedCalls).
+
+callers(Events,Calls) :-
+    callers(Events,[],Calls).
+
+callers([],Calls,Calls).
+callers([Event|Rest],Calls,NewCalls) :-
+    action(Event,Action),
+    call(_,_,_) = Action, !,
+    calls_in_context(Rest,[Action],Remaining,Calls,Calls1),
+    callers(Remaining,Calls1,NewCalls).
+callers([_|Rest],Calls,NewCalls) :-
+    callers(Rest,Calls,NewCalls).
+
+calls_in_context([],_,[],Calls,Calls).
+calls_in_context(Events,[],Events,Calls,Calls).
+calls_in_context([First|Rest],Stack,Remaining,Calls,NewCalls) :-
+    isReturnEvent(First), !,
+    calls_in_context(Rest,Stack,Remaining,Calls,NewCalls).
+calls_in_context([First|Rest],Stack,Remaining,Calls,[call(First,From)|NewCalls]) :-
+    action(First,Action),
+    call(_,_,_) = Action, !,
+    [From|_] = Stack,
+    calls_in_context(Rest,Stack,Remaining,Calls,NewCalls).
+calls_in_context([_|Rest],Stack,Remaining,Calls,NewCalls) :-
+    calls_in_context(Rest,Stack,Remaining,Calls,NewCalls).
 
 spawnedFirst(Delta,process(_,_,[Event1|_]),process(_,_,[Event2|_])) :-
     time(Event1,Time1),
