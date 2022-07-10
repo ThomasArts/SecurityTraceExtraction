@@ -1,4 +1,4 @@
-%% Check non-interference against two enoise runs
+%% Check non-interference for two enoise runs
 %%
 
 %% Main predicate, to be called with two run identifiers, e.g., nonint(r1,r2).
