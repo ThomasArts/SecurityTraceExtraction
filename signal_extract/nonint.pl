@@ -46,9 +46,12 @@ isTrustedCall(To) :-
                ,{erlang,list_to_atom,1}
                ,{erlang,atom_to_list,1}
                ,{erlang,list_to_binary,1}
+               ,{erlang,monitor,2}
+               ,{erlang,demonitor,2}
                ,{inet,getopts,2}
                ,{inet,setopts,2}
                ,{gen_tcp,controlling_process,2}
+               ,{gen_tcp,close,1}
            ]).
 
 isTrustedModule(M) :-
@@ -140,7 +143,8 @@ nonint(R1,Ps1,R2,Ps2) :-
 	],Subst),
     nonint(R1,Ps1,R2,Ps2,Subst).
 
-nonint(_,[],_,[],_) :- !.
+nonint(_,[],_,[],_) :-
+    !, format('~n~nTerminated non-interference check successfully.~n').
 nonint(R1,[P1|Rest1],R2,[P2|Rest2],Sub) :-
     nonint(R1,P1,R2,P2,Sub,NewSub),
     nonint(R1,Rest1,R2,Rest2,NewSub).
@@ -149,8 +153,7 @@ nonint(R1,process(R1,Pid1,Events1),R2,process(R2,Pid2,Events2),Sub,NewSub) :-
     put_assoc(Pid2,Sub,Pid1,Sub1),
     nonint(R1,Pid1,Events1,R2,Pid2,Events2,Sub1,NewSub).
 
-nonint(_,_,[],_,_,[],Sub,Sub) :-
-    !, format('~n~nTerminated non-interference check successfully.~n').
+nonint(_,_,[],_,_,[],Sub,Sub).
 nonint(_R1,_Pid1,[Ev1|_Rest1],_R2,_Pid2,_,Sub,_NewSub) :-
     isLowEvent(Ev1,Sub), !,
     format('*** Error: low event ~w issued from enoise code.~n',[Ev1]),
