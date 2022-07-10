@@ -28,14 +28,10 @@ run(Run,Processes) :-
     predsort(spawnedFirst,UnsortedProcesses,Processes).
 
 process(Run,process(Run,Pid,Events)) :-
-    format('process~n'),
     events(Run,Pid,UnsortedEvents),
     predsort(timeOrder,UnsortedEvents,SortedEvents),
-    format('before collapseEvents~n'),
     collapseEvents(SortedEvents,Events),
-    format('Before callers~n'),
-    callers(Events,Calls),
-    format('Calls are ~w~n',[Calls]).
+    callers(Events,_Calls).
 
 pid(event(Pid,_,_,_), Pid).
 time(event(_,_,TimeStamp,_),TimeStamp).
@@ -73,30 +69,40 @@ isNormalReturnEvent(Event) :-
                   ,{gen_server,start_link,3}
               ]).
 
-highModules(
-    [
-	enoise, enoise_test, enoise_crypto, enoise_crypto_basics,
-	enoise_hs_state, enoise_keypair, enoise_protocol, enoise_sym_state, 
-	enoise_cipher_state, enoise_connection,
-	enacl, enacl_nif, get_key,
-	proplists, lists, maps
-    ]).
+isTrustedCall(To) :-
+    {M,F,Arity} = To,
+    isTrustedModule(M), !.
+isTrustedCall(To) :-
+    member(To,
+           [
+	       {erlang,setelement,3}
+               ,{proc_lib,init_p,5}
+               ,{gen,init_it,6}
+               ,{gen_server,init_it,6}
+               ,{erlang,'++',2}
+           ]).
 
-highCalls(
-    [
-	{erlang,setelement,3}
-        ,{proc_lib,init_p,5}
-        ,{gen,init_it,6}
-        ,{gen_server,init_it,6}
-        ,{erlang,'++',2}
-    ]).
+isTrustedModule(M) :-
+    member(M,        
+           [
+	       enacl, enacl_nif, get_key,
+	       proplists, lists, maps
+           ]).
 
 
-highSpecialCall(gen_tcp,send,[Port,_],Subst) :-
+trustedSpecialCall(gen_tcp,send,[Port,_],Subst) :-
     get_assoc(enoise(Port),Subst,_).
-highSpecialCall(gen_server,start_link,[enoise_connection,_,_],_).
-highSpecialCall(gen_server,call,[Pid,_],Subst) :-
+trustedSpecialCall(gen_server,start_link,[enoise_connection,_,_],_).
+trustedSpecialCall(gen_server,call,[Pid,_],Subst) :-
     get_assoc(enoise(Pid),Subst,_).
+
+enoise_context({M,_,_}) :-
+    member(M,
+           [
+	       enoise, enoise_crypto, enoise_crypto_basics,
+	       enoise_hs_state, enoise_keypair, enoise_protocol, enoise_sym_state, 
+	       enoise_cipher_state, enoise_connection
+           ]).
 
 isLowEvent(Event,Subst) :-
     action(Event,send(_,Pid)),
@@ -104,29 +110,26 @@ isLowEvent(Event,Subst) :-
 isLowEvent(Event,Subst) :-
     action(Event,call(M,F,Args)),
     length(Args,Arity),
-    highModules(HModules),
-    \+ member(M,HModules),
-    highCalls(HCalls),
-    \+ member({M,F,Arity},HCalls),
-    \+ highSpecialCall(M,F,Args,Subst).
+    context_call(Event,Context),
+    enoise_context(Context),
+    \+ enoise_context({M,F,Arity}),
+    \+ isTrustedCall({M,F,Arity}),
+    \+ trustedSpecialCall(M,F,Args,Subst).
+
+%%isLowEvent(Event,Subst) :-
+%%    action(Event,send(_,Pid)),
+%%    \+ get_assoc(enoise(Pid),Subst,_).
+%%isLowEvent(Event,Subst) :-
+%%    action(Event,call(M,F,Args)),
+%%    length(Args,Arity),
+%%    highModules(HModules),
+%%    \+ member(M,HModules),
+%%    highCalls(HCalls),
+%%    \+ member({M,F,Arity},HCalls),
+%%    \+ highSpecialCall(M,F,Args,Subst).
 
 module(Event,M) :-
     action(Event,call(M,_,_)).
-
-isHighEvent(Event) :-
-    isHighCallEvent(Event), !.
-isHighEvent(Event) :-
-    isLinkEvent(Event), !.
-
-isHighCallEvent(Event) :-
-    isCallEvent(Event),
-    module(Event,M),
-    member(M,[
-     enoise, enoise_test, 
-     enoise_crypto, 
-     enoise_hs_state, enoise_keypair, enoise_protocol, enoise_sym_state, 
-     enoise_cipher_state, enoise_connection
-    ]).
 
 pids(Pids) :-
     findall(Pid, ( isEvent(Event), pid(Event,Pid) ), UnsortedPids),
@@ -188,22 +191,26 @@ callers(Events,Calls) :-
 callers([],Calls,Calls).
 callers([Event|Rest],Calls,NewCalls) :-
     action(Event,Action),
-    call(_,_,_) = Action, !,
-    calls_in_context(Rest,[Action],Remaining,Calls,Calls1),
+    call(M,F,Args) = Action, !,
+    length(Args,Arity),
+    calls_in_context(Rest,[{M,F,Arity}],Remaining,Calls,Calls1),
     callers(Remaining,Calls1,NewCalls).
 callers([_|Rest],Calls,NewCalls) :-
     callers(Rest,Calls,NewCalls).
 
 calls_in_context([],_,[],Calls,Calls).
 calls_in_context(Events,[],Events,Calls,Calls).
-calls_in_context([First|Rest],Stack,Remaining,Calls,NewCalls) :-
+calls_in_context([First|Rest],[_|Stack],Remaining,Calls,NewCalls) :-
     isReturnEvent(First), !,
     calls_in_context(Rest,Stack,Remaining,Calls,NewCalls).
-calls_in_context([First|Rest],Stack,Remaining,Calls,[call(First,From)|NewCalls]) :-
+calls_in_context([First|Rest],Stack,Remaining,Calls,[Fact|NewCalls]) :-
     action(First,Action),
-    call(_,_,_) = Action, !,
+    call(M,F,Args) = Action, !,
+    length(Args,Arity),
     [From|_] = Stack,
-    calls_in_context(Rest,Stack,Remaining,Calls,NewCalls).
+    Fact = context_call(First,From),
+    assert(Fact),
+    calls_in_context(Rest,[{M,F,Arity}|Stack],Remaining,Calls,NewCalls).
 calls_in_context([_|Rest],Stack,Remaining,Calls,NewCalls) :-
     calls_in_context(Rest,Stack,Remaining,Calls,NewCalls).
 
