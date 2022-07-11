@@ -164,12 +164,12 @@ nonint(_R1,_Pid1,_,_R2,_Pid2,[Ev2|_Rest2],Sub,_NewSub) :-
     fail.
 nonint(R1,Pid1,[Ev1|Rest1],R2,Pid2,[Ev2|Rest2],Sub,NewSub) :-
     isEvent(Ev1), isEvent(Ev2), !,
-    nonint_high(R1,Pid1,[Ev1|Rest1],R2,Pid2,[Ev2|Rest2],Sub,NewSub).
+    nonint_events(R1,Pid1,[Ev1|Rest1],R2,Pid2,[Ev2|Rest2],Sub,NewSub).
 nontint(_,_,[First1|_],_,_,[First2|_],_,_) :-
     format('*** Error: ~w or ~w are not events.~n',[First1,First2]),
     fail.
 
-nonint_high(R1,Pid1,[Ev1|Rest1],R2,Pid2,[Ev2|Rest2],Sub,NewSub) :-
+nonint_events(R1,Pid1,[Ev1|Rest1],R2,Pid2,[Ev2|Rest2],Sub,NewSub) :-
     isNormalReturnEvent(Ev1), isNormalReturnEvent(Ev2), !,
     action(Ev1,return_from(M1,F1,Arity1,Value1)),
     action(Ev2,return_from(M2,F2,Arity2,Value2)),
@@ -177,11 +177,11 @@ nonint_high(R1,Pid1,[Ev1|Rest1],R2,Pid2,[Ev2|Rest2],Sub,NewSub) :-
       nonint(R1,Pid1,Rest1,R2,Pid2,Rest2,Sub,NewSub);
       format('The return from ~w:~w/~w with value ~w did not match the return from ~w/~w:~w with value ~w~n',[M1,F1,Arity1,Value1,M2,F2,Arity2,Value2]),
       fail ).
-nonint_high(R1,Pid1,[Ev1|Rest1],R2,Pid2,[Ev2|Rest2],Sub,NewSub) :-
+nonint_events(R1,Pid1,[Ev1|Rest1],R2,Pid2,[Ev2|Rest2],Sub,NewSub) :-
     isReturnEvent(Ev1), isReturnEvent(Ev2), !,
     nonint_returns(Ev1,Ev2,Sub,Sub1),
     nonint(R1,Pid1,Rest1,R2,Pid2,Rest2,Sub1,NewSub).
-nonint_high(R1,Pid1,[Ev1|Rest1],R2,Pid2,[Ev2|Rest2],Sub,NewSub) :-
+nonint_events(R1,Pid1,[Ev1|Rest1],R2,Pid2,[Ev2|Rest2],Sub,NewSub) :-
      action(Ev1,receive(Msg1)),
      action(Ev2,receive(Msg2)),
      !,
@@ -190,7 +190,7 @@ nonint_high(R1,Pid1,[Ev1|Rest1],R2,Pid2,[Ev2|Rest2],Sub,NewSub) :-
        diff(Msg1,Msg2,Diff),
        update_assoc_from_diff(Sub,Diff,Subst1),
        nonint(R1,Pid1,Rest1,R2,Pid2,Rest2,Subst1,NewSub) ).
-nonint_high(R1,Pid1,[Ev1|Rest1],R2,Pid2,[Ev2|Rest2],Sub,NewSub) :-
+nonint_events(R1,Pid1,[Ev1|Rest1],R2,Pid2,[Ev2|Rest2],Sub,NewSub) :-
     action(Ev1,spawn(PidN1,Value1)),
     action(Ev2,spawn(PidN2,Value2)),
     !,
@@ -199,7 +199,7 @@ nonint_high(R1,Pid1,[Ev1|Rest1],R2,Pid2,[Ev2|Rest2],Sub,NewSub) :-
       nonint(R1,Pid1,Rest1,R2,Pid2,Rest2,Sub,NewSub);
       put_assoc(PidN2,Sub,PidN1,Subst1),
       nonint(R1,Pid1,Rest1,R2,Pid2,Rest2,Subst1,NewSub) ).
-nonint_high(R1,Pid1,[Ev1|Rest1],R2,Pid2,[Ev2|Rest2],Sub,NewSub) :-
+nonint_events(R1,Pid1,[Ev1|Rest1],R2,Pid2,[Ev2|Rest2],Sub,NewSub) :-
     ( equal_events(Ev1,Ev2,Sub) ->
       nonint(R1,Pid1,Rest1,R2,Pid2,Rest2,Sub,NewSub) ;
       format('~n Events~n   ~w~n and~n    ~w~n are not equal.~n',[Ev1,Ev2]),
