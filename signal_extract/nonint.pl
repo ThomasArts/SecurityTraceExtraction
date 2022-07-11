@@ -169,18 +169,14 @@ nontint(_,_,[First1|_],_,_,[First2|_],_,_) :-
     format('*** Error: ~w or ~w are not events.~n',[First1,First2]),
     fail.
 
-nonint_low(R1,Pid1,Ev1,Rest1,R2,Pid2,Ev2,Rest2,Sub,NewSub) :-
-    assoc_to_list(Sub,SubList),
-    include(lowSubst,SubList,LowSubList),
-    list_to_assoc(LowSubList,LowSub),
-    ( equal_events(Ev1,Ev2,LowSub) ->
-      nonint(R1,Pid1,Rest1,R2,Pid2,Rest2,Sub,NewSub);
-      format('~n Low events~n   ~w~n and~n    ~w~n are not equal.~n',[Ev1,Ev2]),
-      fail ).
-
 nonint_high(R1,Pid1,[Ev1|Rest1],R2,Pid2,[Ev2|Rest2],Sub,NewSub) :-
     isNormalReturnEvent(Ev1), isNormalReturnEvent(Ev2), !,
-    nonint(R1,Pid1,Rest1,R2,Pid2,Rest2,Sub,NewSub).
+    action(Ev1,return_from(M1,F1,Arity1,Value1)),
+    action(Ev2,return_from(M2,F2,Arity2,Value2)),
+    ( (M1==M2, F1==F2, Arity1==Arity2, term_equal(Value1,Value2,Sub)) ->
+      nonint(R1,Pid1,Rest1,R2,Pid2,Rest2,Sub,NewSub);
+      format('The return from ~w:~w/~w with value ~w did not match the return from ~w/~w:~w with value ~w~n',[M1,F1,Arity1,Value1,M2,F2,Arity2,Value2]),
+      fail ).
 nonint_high(R1,Pid1,[Ev1|Rest1],R2,Pid2,[Ev2|Rest2],Sub,NewSub) :-
     isReturnEvent(Ev1), isReturnEvent(Ev2), !,
     nonint_returns(Ev1,Ev2,Sub,Sub1),
