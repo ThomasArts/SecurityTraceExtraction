@@ -6,24 +6,26 @@
 
 -module(compare).
 
+-include("noise_config.hrl").
+
 -compile([export_all]).
 
-compare(SemanticTerm,TraceTerm) ->
-    compare(concrete_noise,SemanticTerm,TraceTerm).
+compare(SemanticTerm,TraceTerm,Config) ->
+    compare(concrete_noise,SemanticTerm,TraceTerm,Config).
 
-compare(Concretizer,SemanticTerm,TraceTerm) ->
-  Concrete = concretize(list_to_merge(SemanticTerm), Concretizer),
+compare(Concretizer,SemanticTerm,TraceTerm,Config) ->
+  Concrete = concretize(list_to_merge(SemanticTerm), Concretizer, Config),
   difference(Concrete, TraceTerm, []).
 
-concretize(List, Concretizer) when is_list(List) ->
-    [ concretize(E, Concretizer) || E <- List ];
-concretize({Fun, Args}, Concretizer) ->
-    ConcreteArgs = concretize(Args, Concretizer),
-    try apply(Concretizer, Fun, ConcreteArgs)
+concretize(List, Concretizer, Config) when is_list(List) ->
+    [ concretize(E, Concretizer, Config) || E <- List ];
+concretize({Fun, Args}, Concretizer, Config) ->
+    ConcreteArgs = concretize(Args, Concretizer, Config),
+    try apply(Concretizer, Fun, ConcreteArgs ++ [Config])
     catch _:_ ->
             {Fun, ConcreteArgs}
     end;
-concretize(X, _) ->
+concretize(X, _, _) ->
     X.
 
 head_normalize(T) ->
@@ -40,8 +42,10 @@ head_normalize(T) ->
 
 difference(T1,T2,Subst) ->
   T1N = head_normalize(T1),
+%  T2N = head_normalize(T2),
+%  diff(T1N,T2,Subst).
   T2N = head_normalize(T2),
-  diff(T1N,T2,Subst).
+  diff(T1N,T2N,Subst).
 
 diff({F, M, As}, {F, M, Bs}, Subs) when length(As) == length(Bs) ->
   {Results, NewSubs} = 
@@ -57,12 +61,13 @@ diff({F, M, As}, {F, M, Bs}, Subs) when length(As) == length(Bs) ->
 diff(A, A, Subst) ->
     {eq, Subst};
 diff(A, {F, M, Args} = B, Subs) when A =/= B ->
-    Same =
-        try apply(F, M, Args) == A
-        catch _:_ -> false
-        end,
+    {Same,R} =
+        try
+          Result = apply(F, M, Args),
+          {Result == A, Result}
+        catch _:_ -> {false, undefined} end,
     if Same -> {eq, Subs};
-       not Same -> 
+       not Same ->
         case lists:member({A,B},Subs) of
           true -> {eq, Subs};
           false -> {{A, '/=', B}, [{A,B}|Subs]}

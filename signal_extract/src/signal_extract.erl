@@ -2,7 +2,7 @@
 
 -include_lib("kernel/include/logger.hrl").
 
--export([noisy_trace/1,noisy_trace/5]).
+-export([noisy_trace/7]).
 -export([register_binaries/3,trace_make_call_deterministic/1]).
 -export([get_traces/1,compose_binaries/1,print_array/2]).
 -export([print_binary_register/0,show_trace/1,show_registered_trace/1]).
@@ -18,10 +18,7 @@
 
 %% rebar3 as test shell
 
-noisy_trace(File) ->
-  noisy_trace("XK","25519","ChaChaPoly","BLAKE2b",File).
-
-noisy_trace(Handshake,DH,Crypto,Hash,TraceFileName) ->
+noisy_trace(Handshake,DH,Crypto,Hash,TraceFileName,Message,KeyDir) ->
   EnoiseModules = 
     [
      enoise, 
@@ -31,15 +28,20 @@ noisy_trace(Handshake,DH,Crypto,Hash,TraceFileName) ->
     ],
   LoadModules =
     [
-     enacl, enacl_nif, unicode_util, gen_tcp, inet_tcp, signal_extract_utils, gen, gen_server,
+     logger, enacl, enacl_nif, unicode_util, gen_tcp, inet_tcp, signal_extract_utils, gen, gen_server, crypto,
      enoise_crypto_basics, signal_extract_utils, enoise_test, code, file, base64, io, get_key
     ],
   lists:foreach(fun code:ensure_loaded/1, EnoiseModules++LoadModules),
+
+  %% Warmup code
+  inet_gethost_native:gethostbyname("localhost",inet),
+
+  timer:sleep(1000),
   KnowsRS = echo_noise:knows_rs(Handshake),
   test
     (
     fun () -> 
-        enoise_test:client_test(Handshake,DH,Crypto,Hash,KnowsRS) 
+        enoise_test:client_test(Handshake,DH,Crypto,Hash,KnowsRS,Message,KeyDir) 
     end, 
     EnoiseModules,
     TraceFileName
@@ -51,9 +53,10 @@ do_trace(TracedPid,ToPid,Modules) ->
                 %%call,arity,return_to,
                 call,
                 set_on_spawn,
-                %%'receive',
+                'receive',
                 send,
-                %% procs,ports, -- better not
+                procs,
+		ports,
                 %%return_to,
                 %% set_on_link,
                 %%arity,
@@ -61,6 +64,8 @@ do_trace(TracedPid,ToPid,Modules) ->
                 timestamp,{tracer,ToPid}
                ]),
   erlang:trace_pattern({'_', '_', '_'}, [{'_', [], [{exception_trace},{return_trace}]}], [global]),
+  %% erlang:trace_pattern({'binary', '_', '_'}, [{'_', [], [{exception_trace},{return_trace}]}], [global]),
+  %% erlang:trace_pattern({'erlang', '_', '_'}, [{'_', [], [{exception_trace},{return_trace}]}], [global]),
   erlang:trace_pattern({enacl_nif, '_', '_'}, false, []),
   lists:foreach
     (fun (Module) -> 
@@ -157,6 +162,8 @@ analyze_trace_file(FileName) ->
      {get_key, get_key, 3}
     ],
   
+  signal_extract_utils:open_clean_db(),
+
   ?LOG_DEBUG("~n~nDeterminizing trace...~n"),
   DetTraces = 
     lists:map
@@ -424,12 +431,20 @@ compose_binaries(Traces) ->
                end,
                case lists:keyfind(SourcePid,1,Traces) of
                  false ->
-                   ?LOG_DEBUG
+                   io:format
                      ("~n*** Error: cannot find SourcePid ~p (from ~p) in traces???~n",
                       [SourcePid,Register]),
                    error(bad);
                  _ -> ok
                end,
+	     if
+	       StartTime > EndTime ->
+		 io:format
+		   ("*** Error: ~p started at ~p and was produced at ~p~n",
+		    [Register,StartTime,EndTime]),
+		 error(bad);
+	       true -> ok
+	     end,
              {_,A} = lists:keyfind(SourcePid,1,Traces),
              PreContextBinaries = 
                lists:usort(defined_in_call(SourcePid,StartTime,EndTime,A)),
@@ -494,7 +509,7 @@ defined_in_call(Pid,FromTime,ToTime,A) ->
   Size = array:size(A),
   if
     (FromTime > ToTime) or (ToTime > Size) ->
-      ?LOG_DEBUG
+      io:format
         ("~n*** Error: incorrect parameters ~p -> ~p when ~p~n",
          [FromTime,ToTime,Size]),
       error(bad);
@@ -504,9 +519,9 @@ defined_in_call(Pid,FromTime,ToTime,A) ->
 defined_in_call(Pid,FromTime,ToTime,Skip,Size,A) ->
   if
     FromTime > ToTime ->
-      ?LOG_DEBUG
-        ("~n*** Error: defined_in_call(~p,~p)~n",
-         [FromTime,ToTime]),
+      io:format
+        ("~n*** Error: defined_in_call(~p,~p) event1=~p event2=~p~n",
+         [FromTime,ToTime,array:get(FromTime,A),array:get(ToTime,A)]),
       error(bad);
     true -> ok
   end,
@@ -616,7 +631,8 @@ call_of_function(_Pid,-1,Skip,Size,_A) ->
   ?LOG_DEBUG
     ("~n*** Warning: could not find call loc, skip:~n~p~n",
      [Skip]),
-  Size-1;
+  %%Size-1;
+  0;
 call_of_function(Pid,I,Skip,Size,A) ->
   Item = array:get(I,A),
   %%?LOG_DEBUG("~p: cof(~p,~p)~n",[I,Skip,Item]),
@@ -1414,3 +1430,80 @@ xor_const() ->
          end
      end).
 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+trace_to_prolog(TraceFile,PrologFile,RunId) ->
+  {ok,PF} = file:open(PrologFile,[write]),
+  {ok,B} = file:read_file(TraceFile),
+  {trace,L} = binary_to_term(B),
+  lists:foreach
+        (fun (Fact) ->
+           case Fact of
+             {trace_ts, Pid, call, {M,F,A}, TimeStamp} ->
+               io:format(PF,"event(~s,call(~s,~s,[~s]),~s,~p).~n",[to_pid(Pid),value_to_prolog(M),value_to_prolog(F),values_to_prolog(A),timestamp_to_prolog(TimeStamp),RunId]);
+             {trace_ts, Pid, return_from, {M,F,Arity}, Value, TimeStamp} ->
+               io:format(PF,"event(~s,return_from(~s,~s,~s,~s),~s,~p).~n",[to_pid(Pid),value_to_prolog(M),value_to_prolog(F),value_to_prolog(Arity),value_to_prolog(Value),timestamp_to_prolog(TimeStamp),RunId]);
+             {trace_ts, Pid, send, Msg, To, TimeStamp} ->
+               io:format(PF,"event(~s,send(~s,~s),~s,~p).~n",[to_pid(Pid),value_to_prolog(Msg),value_to_prolog(To),timestamp_to_prolog(TimeStamp),RunId]);
+             {trace_ts, Pid, exception_from, {M,F,Arity}, {Class,Reason}, TimeStamp} ->
+               io:format(PF,"event(~s,exception_from(~s,~s,~s,~s,~s),~s,~p).~n",[to_pid(Pid),value_to_prolog(M),value_to_prolog(F),value_to_prolog(Arity),value_to_prolog(Class),value_to_prolog(Reason),timestamp_to_prolog(TimeStamp),RunId]);
+	     {trace_ts, Pid, exit, Arg, TimeStamp} ->
+               io:format(PF,"event(~s,exit(~s),~s,~p).~n",[to_pid(Pid),value_to_prolog(Arg),timestamp_to_prolog(TimeStamp),RunId]);
+	     {trace_ts, Pid, unlink, Arg, TimeStamp} ->
+               io:format(PF,"event(~s,unlink(~s),~s,~p).~n",[to_pid(Pid),value_to_prolog(Arg),timestamp_to_prolog(TimeStamp),RunId]);
+	     {trace_ts, Pid, getting_unlinked, Arg, TimeStamp} ->
+               io:format(PF,"event(~s,getting_unlinked(~s),~s,~p).~n",[to_pid(Pid),value_to_prolog(Arg),timestamp_to_prolog(TimeStamp),RunId]);
+	     {trace_ts, Pid, link, Arg, TimeStamp} ->
+               io:format(PF,"event(~s,link(~s),~s,~p).~n",[to_pid(Pid),value_to_prolog(Arg),timestamp_to_prolog(TimeStamp),RunId]);
+	     {trace_ts, Pid, getting_linked, LinkingPid, TimeStamp} ->
+               io:format(PF,"event(~s,getting_linked(~s),~s,~p).~n",[to_pid(Pid),value_to_prolog(LinkingPid),timestamp_to_prolog(TimeStamp),RunId]);
+	     {trace_ts, Pid, spawn, SpawnedPid, Arg, TimeStamp} ->
+               io:format(PF,"event(~s,spawn(~s,~s),~s,~p).~n",[to_pid(Pid),to_pid(SpawnedPid),value_to_prolog(Arg),timestamp_to_prolog(TimeStamp),RunId]);
+	     {trace_ts, Pid, spawned, ParentPid, Arg, TimeStamp} ->
+               io:format(PF,"event(~s,spawned(~s,~s),~s,~p).~n",[to_pid(Pid),to_pid(ParentPid),value_to_prolog(Arg),timestamp_to_prolog(TimeStamp),RunId]);
+	     {trace_ts, Pid, 'receive', Msg, TimeStamp} ->
+               io:format(PF,"event(~s,receive(~s),~s,~p).~n",[to_pid(Pid),value_to_prolog(Msg),timestamp_to_prolog(TimeStamp),RunId]);
+             Event ->
+               io:format("Cannot translate event ~p yet~n",[Event]),
+               error(nyi)
+           end
+         end, L),
+   ok = file:close(PF).
+      
+values_to_prolog(Args) ->
+  comma_list(lists:map(fun value_to_prolog/1,Args)).
+
+value_to_prolog(V) ->
+  case V of
+    _ when is_pid(V) -> to_pid(V);
+    _ when is_port(V) -> io_lib:format("port('~p')",[V]);
+    _ when is_map(V) -> io_lib:format("map(~s)",[value_to_prolog(maps:to_list(V))]);
+    _ when is_reference(V) -> io_lib:format("reference('~p')",[V]);
+    _ when is_function(V) -> io_lib:format("function('~p')",[V]);
+    _ when is_binary(V) -> io_lib:format("binary(~s)",[value_to_prolog(binary:bin_to_list(V))]);
+    T when is_tuple(T) -> io_lib:format("tuple(~s)",[comma_list(lists:map(fun (E) -> value_to_prolog(E) end, tuple_to_list(T)))]);
+    [] -> "[]";
+    L when is_list(L) -> 
+      case is_string(L) of
+        true -> io_lib:format("\"~s\"",[L]);
+        false -> io_lib:format("[~s]",[comma_list(lists:map(fun (E) -> value_to_prolog(E) end, L))])
+      end;
+    _ -> io_lib:format("~p",[V])
+  end.
+
+is_string([]) ->
+  false;
+is_string(L) ->
+  lists:all(fun (Ch) -> (Ch >= 32) and (Ch =< 126) end, L).
+
+comma_list([]) -> "";
+comma_list([Element]) -> Element;
+comma_list([First|Rest]) -> First ++ "," ++ comma_list(Rest).
+
+to_pid(P) -> io_lib:format("pid('~p')",[P]).
+
+timestamp_to_prolog({T1,T2,T3}) ->
+  io_lib:format("timestamp(~p,~p,~p)",[T1,T2,T3]).
+
+%% signal_extract:trace_to_prolog("enoise.trace","enoise.pl").
+%% signal_extract:trace_to_prolog("nonint1.trace","nonint1.pl").

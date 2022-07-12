@@ -1,0 +1,5 @@
+- Do not intend to execute functions with symbolic terms (e.g., in diff).
+
+- Mark terms as symbolic.
+
+- Equality of executions (up-to-admissible-changes communicated over tcp and in enoise state) when keys and messages vary.

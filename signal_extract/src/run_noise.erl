@@ -11,13 +11,55 @@ protocol_name(HandshakeName,DHType,CipherType,HashType) ->
 
 find_handshake(HandshakeName) ->
   if
-    HandshakeName == "XK" ->
+    HandshakeName == "NN" ->
+      {
+        [],
+        [
+	 {snd,[e]},
+         {rcv,[e,ee]}
+        ]
+      };
+    HandshakeName == "KN" ->
+      {
+        [{snd,[s]}],
+        [
+         {snd,[e]},
+         {rcv,[e,ee,se]}
+        ]
+      };
+    HandshakeName == "NK" ->
       {
         [{rcv,[s]}],
         [
          {snd,[e,es]},
-         {rcv,[e,ee]},
-         {snd,[s,se]}
+         {rcv,[e,ee]}
+        ]
+      };
+    HandshakeName == "KK" ->
+      {
+        [
+         {snd,[s]},
+         {rcv,[s]}
+        ],
+        [
+         {snd,[e,es,ss]},
+         {rcv,[e,ee,se]}
+        ]
+      };
+    HandshakeName == "NX" ->
+      {
+        [],
+        [
+	 {snd,[e]},
+         {rcv,[e,ee,s,es]}
+        ]
+      };
+    HandshakeName == "KX" ->
+      {
+        [{snd,[s]}],
+        [
+         {snd,[e]},
+         {rcv,[e,ee,se,s,es]}
         ]
       };
     HandshakeName == "XN" ->
@@ -29,6 +71,31 @@ find_handshake(HandshakeName) ->
          {snd,[s,se]}
         ]
       };
+    HandshakeName == "IN" ->
+      {
+        [],
+        [
+         {snd,[e,s]},
+         {rcv,[e,ee,se]}
+        ]
+      };
+    HandshakeName == "XK" ->
+      {
+        [{rcv,[s]}],
+        [
+         {snd,[e,es]},
+         {rcv,[e,ee]},
+         {snd,[s,se]}
+        ]
+      };
+    HandshakeName == "IK" ->
+      {
+        [{rcv,[s]}],
+        [
+         {snd,[e,es,s,ss]},
+         {rcv,[e,ee,se]}
+        ]
+      };
     HandshakeName == "XX" ->
       {
         [],
@@ -36,6 +103,53 @@ find_handshake(HandshakeName) ->
          {snd,[e]},
          {rcv,[e,ee,s,es]},
          {snd,[s,se]}
+        ]
+      };
+    HandshakeName == "IX" ->
+      {
+        [],
+        [
+         {snd,[e,s]},
+         {rcv,[e,ee,se,s,es]}
+        ]
+      };
+
+      %% Examples of deferred handshake patterns
+    HandshakeName == "NK1" ->
+      {
+        [{rcv,[s]}],
+        [
+         {snd,[e]},
+         {rcv,[e,ee,es]}
+        ]
+      };
+    HandshakeName == "X1X" ->
+      {
+        [],
+        [
+         {snd,[e]},
+         {rcv,[e,ee,s,es]},
+         {snd,[s]},
+	 {rcv,[se]}
+        ]
+      };
+    HandshakeName == "XX1" ->
+      {
+        [],
+        [
+         {snd,[e]},
+         {rcv,[e,ee,s]},
+         {snd,[es,s,se]}
+        ]
+      };
+    HandshakeName == "X1X1" ->
+      {
+        [],
+        [
+         {snd,[e]},
+         {rcv,[e,ee,s]},
+         {snd,[es,s]},
+	 {rcv,[se]}
         ]
       }
   end.
@@ -47,6 +161,12 @@ find_crypto_parms("ChaChaPoly") ->
   {ok,[]}.
 
 find_hash_parms("BLAKE2b") ->
+  {ok,[{'HASHLEN',64}, {'BLOCKLEN',128}]};
+find_hash_parms("BLAKE2s") ->
+  {ok,[{'HASHLEN',32}, {'BLOCKLEN',64}]};
+find_hash_parms("SHA256") ->
+  {ok,[{'HASHLEN',32}, {'BLOCKLEN',64}]};
+find_hash_parms("SHA512") ->
   {ok,[{'HASHLEN',64}, {'BLOCKLEN',128}]}.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%

@@ -1,0 +1,1 @@
+-record(noise_config,{handshake,dh,crypto,hash}).
