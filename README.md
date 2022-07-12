@@ -31,6 +31,23 @@ For more debugging output try instead:
     
     $ rebar shell --config config/logger.config 
    
+
+Checking non-interference
+-------------------------
+
+Note that an installation of SWI-Prolog (or a compatable Prolog) is required.
+
+    $ cd signal_extract
+
+    $ swipl
+    
+    ?- consult('noint.pl').
+    
+    ? nonint(r1,r2).
+    
+    ...
+
+
 Creating new keys
 -----------------
 
