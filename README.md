@@ -43,6 +43,8 @@ Note that an installation of SWI-Prolog (or a compatable Prolog) is required.
     
     ?- consult('noint.pl').
     
+    ?- consult('../traces/noints.pl').
+    
     ? nonint(r1,r2).
     
     ...
